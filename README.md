@@ -1,6 +1,6 @@
-# fabBear Backend
+# fabBear AI-Agent
 
-Spring Boot와 FastAPI 기반 백엔드 저장소 협업 규칙입니다.
+AI-Agent 저장소 협업 규칙입니다.
 
 ## AI Agent uv 환경 설정
 
