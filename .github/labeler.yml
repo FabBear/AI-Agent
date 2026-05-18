@@ -1,0 +1,69 @@
+comment: |
+  PR 제목을 기준으로 라벨을 자동 부여했습니다.
+  필요할 경우 라벨을 수정하거나 추가해 주세요.
+
+labels:
+  "✨ Feature":
+    - '.*\[FEAT\].*'
+    - '.*\[FEATURE\].*'
+
+  "🐞 BugFix":
+    - '.*\[FIX\].*'
+    - '.*\[BUG\].*'
+
+  "🧹 Chore":
+    - '.*\[CHORE\].*'
+
+  "📄 Docs":
+    - '.*\[DOCS\].*'
+
+  "🛠️ Refactor":
+    - '.*\[REFACTOR\].*'
+
+  "🧪 Test":
+    - '.*\[TEST\].*'
+
+  "🤖 Agent":
+    - '.*\[AGENT\].*'
+
+  "🧠 Prompt":
+    - '.*\[PROMPT\].*'
+
+  "🧰 Tool":
+    - '.*\[TOOL\].*'
+    - '.*\[FUNCTION\].*'
+
+  "🔎 RAG":
+    - '.*\[RAG\].*'
+    - '.*\[RETRIEVAL\].*'
+    - '.*\[EMBEDDING\].*'
+
+  "📊 Evaluation":
+    - '.*\[EVAL\].*'
+    - '.*\[EVALUATION\].*'
+
+  "🧩 Model":
+    - '.*\[MODEL\].*'
+    - '.*\[LLM\].*'
+
+  "🔭 Observability":
+    - '.*\[OBS\].*'
+    - '.*\[TRACE\].*'
+    - '.*\[LOG\].*'
+
+  "⚙️ Infra":
+    - '.*\[INFRA\].*'
+    - '.*\[CI\].*'
+    - '.*\[CD\].*'
+    - '.*\[DEPLOY\].*'
+
+  "🔐 Security":
+    - '.*\[SECURITY\].*'
+    - '.*\[AUTH\].*'
+
+  "⚡️ Performance":
+    - '.*\[PERF\].*'
+    - '.*\[PERFORMANCE\].*'
+
+  "🔥 Hotfix":
+    - '.*\[HOTFIX\].*'

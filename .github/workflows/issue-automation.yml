@@ -1,0 +1,37 @@
+name: Issue Automation
+
+on:
+  issues:
+    types:
+      - opened
+
+permissions:
+  issues: write
+
+jobs:
+  assign-author:
+    name: Assign issue author
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Assign issue author
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          ISSUE_AUTHOR_TYPE: ${{ github.event.issue.user.type }}
+        run: |
+          ruby <<'RUBY'
+          exit if ENV.fetch("ISSUE_AUTHOR_TYPE") == "Bot"
+
+          author = ENV.fetch("ISSUE_AUTHOR")
+
+          unless system(
+            "gh", "issue", "edit", ENV.fetch("ISSUE_NUMBER"),
+            "--repo", ENV.fetch("GH_REPO"),
+            "--add-assignee", author
+          )
+            warn "#{author}님을 assignee로 지정하지 못했습니다. 작성자가 저장소 권한을 가지고 있지 않을 수 있습니다."
+          end
+          RUBY

@@ -1,0 +1,71 @@
+- name: "✨ Feature"
+  color: "B0F207"
+  description: "새로운 기능 추가 또는 기존 기능 개선"
+
+- name: "🐞 BugFix"
+  color: "d73a4a"
+  description: "버그, 에러 수정"
+
+- name: "🧹 Chore"
+  color: "A85C44"
+  description: "빌드, 패키지, 설정 등 관리 작업"
+
+- name: "📄 Docs"
+  color: "0075ca"
+  description: "문서 수정"
+
+- name: "🛠️ Refactor"
+  color: "0AC3B0"
+  description: "코드 리팩토링"
+
+- name: "🧪 Test"
+  color: "E76923"
+  description: "테스트 코드 작성"
+
+- name: "🤖 Agent"
+  color: "1D76DB"
+  description: "AI Agent 오케스트레이션, 플래닝, 상태 관리 관련 작업"
+
+- name: "🧠 Prompt"
+  color: "C5DEF5"
+  description: "프롬프트, 시스템 지시문, 응답 형식 관련 작업"
+
+- name: "🧰 Tool"
+  color: "D4C5F9"
+  description: "Tool/function calling, 외부 연동 도구 관련 작업"
+
+- name: "🔎 RAG"
+  color: "5319E7"
+  description: "검색, 임베딩, 벡터 스토어, 지식베이스 관련 작업"
+
+- name: "📊 Evaluation"
+  color: "FBCA04"
+  description: "평가 데이터셋, 회귀 테스트, 품질 측정 관련 작업"
+
+- name: "🧩 Model"
+  color: "E1D5F7"
+  description: "LLM provider, 모델 설정, 파라미터 관련 작업"
+
+- name: "🔭 Observability"
+  color: "0E8A16"
+  description: "로그, trace, 모니터링, 디버깅 관련 작업"
+
+- name: "⚙️ Infra"
+  color: "BFD4F2"
+  description: "CI/CD, 배포, 런타임 환경 설정 작업"
+
+- name: "🔐 Security"
+  color: "C2E0C6"
+  description: "인증, 인가, 보안 취약점 관련 작업"
+
+- name: "⚡️ Performance"
+  color: "F4A261"
+  description: "성능 개선"
+
+- name: "🔥 Hotfix"
+  color: "FF6B35"
+  description: "급한 버그 수정"
+
+- name: "🚧 Not Ready for Review"
+  color: "8d42a3"
+  description: "작업 중인 PR입니다. 완료 후 리뷰 부탁드려요."

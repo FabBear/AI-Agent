@@ -1,0 +1,75 @@
+name: "🐞 Agent Bug"
+description: AI Agent의 잘못된 응답, 도구 호출 오류, 예외 상황을 보고합니다.
+title: "[BUG] "
+labels: ["🐞 BugFix"]
+
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: "발생 영역"
+      options:
+        - "Agent Orchestration"
+        - "Prompt / System Instruction"
+        - "Tool / Function Calling"
+        - "RAG / Knowledge Base"
+        - "Memory / State"
+        - "Model / Provider"
+        - "Evaluation / Test Dataset"
+        - "Observability / Trace"
+        - "Deployment / Runtime"
+    validations:
+      required: true
+
+  - type: textarea
+    id: bug_reproduction
+    attributes:
+      label: "버그 재현 방법"
+      description: "사용자 입력, 세션 상태, 실행 명령, 발생 조건을 순서대로 작성해 주세요."
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: "기대 동작 / 실제 동작"
+      description: "문제가 없을 경우의 에이전트 동작과 현재 발생하는 동작을 비교해 주세요."
+      value: |
+        - 기대 동작:
+        - 실제 동작:
+    validations:
+      required: true
+
+  - type: textarea
+    id: agent_trace
+    attributes:
+      label: "에이전트 실행 정보"
+      description: "가능한 범위에서 문제 분석에 필요한 실행 정보를 작성해 주세요."
+      value: |
+        - 에이전트/워크플로우:
+        - 모델/프롬프트:
+        - tool call/RAG:
+        - trace/request ID:
+    validations:
+      required: false
+
+  - type: textarea
+    id: error_log
+    attributes:
+      label: "로그 / 영향 범위"
+      description: "핵심 로그, 에러 메시지, 재현 빈도, 사용자 영향을 작성해 주세요."
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_info
+    attributes:
+      label: "추가 정보"
+      description: "추가로 공유할 내용이 있다면 자유롭게 작성해 주세요."
+    validations:
+      required: false

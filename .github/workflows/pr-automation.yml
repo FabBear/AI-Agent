@@ -1,0 +1,120 @@
+name: PR Automation
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+      - ready_for_review
+      - converted_to_draft
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  label-and-assign:
+    name: Label and assign PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout automation config
+        uses: actions/checkout@v4
+
+      - name: Label PR from title
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          ruby <<'RUBY'
+          require "open3"
+          require "yaml"
+
+          config = YAML.load_file(".github/labeler.yml")
+          rules = config.fetch("labels")
+          managed_labels = rules.keys + ["🚧 Not Ready for Review"]
+
+          labels_to_add = rules.select do |_label, patterns|
+            Array(patterns).any? do |pattern|
+              Regexp.new(pattern, Regexp::IGNORECASE).match?(ENV.fetch("PR_TITLE"))
+            end
+          end.keys
+
+          labels_to_add << "🚧 Not Ready for Review" if ENV.fetch("PR_DRAFT") == "true"
+
+          repo = ENV.fetch("GH_REPO")
+          pr_number = ENV.fetch("PR_NUMBER")
+          current_labels_output, status = Open3.capture2(
+            "gh", "issue", "view", pr_number,
+            "--repo", repo,
+            "--json", "labels",
+            "--jq", ".labels[].name"
+          )
+          raise "Failed to fetch current labels" unless status.success?
+
+          current_labels = current_labels_output.lines.map(&:chomp)
+          labels_to_remove = current_labels.select do |label|
+            managed_labels.include?(label) && !labels_to_add.include?(label)
+          end
+
+          labels_to_remove.each do |label|
+            system("gh", "issue", "edit", pr_number, "--repo", repo, "--remove-label", label)
+          end
+
+          (labels_to_add - current_labels).each do |label|
+            system("gh", "issue", "edit", pr_number, "--repo", repo, "--add-label", label)
+          end
+          RUBY
+
+      - name: Comment on new PR
+        if: github.event.action == 'opened'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          ruby <<'RUBY'
+          require "yaml"
+          config = YAML.load_file(".github/labeler.yml")
+          comment = config["comment"]
+          exit unless comment
+          system("gh", "pr", "comment", ENV.fetch("PR_NUMBER"), "--repo", ENV.fetch("GH_REPO"), "--body", comment.strip)
+          RUBY
+
+      - name: Assign PR author
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+        run: |
+          ruby <<'RUBY'
+          require "open3"
+
+          exit if ENV.fetch("PR_AUTHOR_TYPE") == "Bot"
+
+          repo = ENV.fetch("GH_REPO")
+          pr_number = ENV.fetch("PR_NUMBER")
+          author = ENV.fetch("PR_AUTHOR")
+          assignees_output, status = Open3.capture2(
+            "gh", "issue", "view", pr_number,
+            "--repo", repo,
+            "--json", "assignees",
+            "--jq", ".assignees[].login"
+          )
+          raise "Failed to fetch current assignees" unless status.success?
+
+          current_assignees = assignees_output.lines.map(&:chomp)
+          exit if current_assignees.include?(author)
+
+          unless system("gh", "issue", "edit", pr_number, "--repo", repo, "--add-assignee", author)
+            warn "Could not assign #{author}. The author may not have repository access."
+          end
+          RUBY

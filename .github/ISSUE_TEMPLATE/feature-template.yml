@@ -1,0 +1,55 @@
+name: "✨ Agent Feature"
+description: AI Agent 기능 추가 또는 기존 에이전트 동작 개선을 요청합니다.
+title: "[FEAT] "
+labels: ["✨ Feature"]
+
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: "대상 영역"
+      options:
+        - "Agent Orchestration"
+        - "Prompt / System Instruction"
+        - "Tool / Function Calling"
+        - "RAG / Knowledge Base"
+        - "Memory / State"
+        - "Model / Provider"
+        - "Evaluation / Test Dataset"
+        - "Observability / Trace"
+        - "Deployment / Runtime"
+    validations:
+      required: true
+
+  - type: textarea
+    id: feature
+    attributes:
+      label: "기능 설명"
+      description: "추가하거나 개선할 에이전트 기능을 작성해 주세요."
+      value: |
+        - 목적:
+        - 사용자 입력/상황:
+        - 기대 에이전트 행동:
+        - 입력/출력:
+    validations:
+      required: true
+
+  - type: textarea
+    id: agent_design
+    attributes:
+      label: "에이전트 설계"
+      description: "변경이 필요한 에이전트 구성 요소만 작성해 주세요."
+      value: |
+        - 대상 에이전트/워크플로우:
+        - 프롬프트/도구/RAG:
+        - 모델/파라미터:
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_info
+    attributes:
+      label: "추가 정보"
+      description: "대화 예시, trace, 평가 결과, 설계 자료가 있다면 작성해 주세요."
+    validations:
+      required: false
