@@ -38,6 +38,7 @@ pip-wheel-metadata/
 *.egg-info/
 .eggs/
 dist/
+build/
 htmlcov/
 .pytest_cache/
 .mypy_cache/
@@ -95,3 +96,6 @@ langchain.db
 
 # Hugging Face cache
 .cache/huggingface/
+
+# uv
+.uv-cache/

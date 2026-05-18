@@ -2,6 +2,68 @@
 
 Spring Boot와 FastAPI 기반 백엔드 저장소 협업 규칙입니다.
 
+## AI Agent uv 환경 설정
+
+AI Agent는 `uv`로 Python 가상환경과 의존성을 관리합니다.
+
+### 1. uv 설치
+
+```bash
+brew install uv
+```
+
+### 2. 의존성 설치
+
+```bash
+cd AI-Agent
+uv sync
+```
+
+`uv sync`를 실행하면 `.python-version`의 Python 버전에 맞춰 `.venv/`가 생성되고,
+`pyproject.toml`과 `uv.lock` 기준으로 동일한 의존성이 설치됩니다.
+
+### 3. 환경 변수 설정
+
+```bash
+cp .env.example .env
+```
+
+`.env`에 아래 값을 팀원 각자의 키로 채워 넣습니다.
+
+```dotenv
+OPENAI_API_KEY=your_key
+TAVILY_API_KEY=your_key
+HUGGINGFACEHUB_API_TOKEN=your_key
+LANGCHAIN_API_KEY=your_key
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+LANGCHAIN_PROJECT=FabBear
+```
+
+실제 키가 들어간 `.env`는 커밋하지 않습니다. 공유가 필요한 변수명은 `.env.example`만
+수정해서 커밋합니다.
+
+### 4. 실행 방법
+
+Python 스크립트는 아래처럼 실행합니다.
+
+```bash
+uv run python path/to/script.py
+```
+
+패키지를 추가할 때는 `pip install` 대신 아래 명령을 사용합니다.
+
+```bash
+uv add package-name
+uv sync
+```
+
+개발 도구 의존성은 아래처럼 추가합니다.
+
+```bash
+uv add --dev package-name
+```
+
 ## Branch Strategy
 
 ```
