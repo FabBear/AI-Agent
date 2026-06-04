@@ -6,8 +6,8 @@ import pandas as pd
 
 from agents.schemas.kpi import ToolGroupKPI
 
-# kpi_toolgroup.csv wide pivot 캐시 (트렌드 분석에서 재사용)
-_tg_wide_cache: dict[Path, pd.DataFrame] = {}
+# kpi_toolgroup.csv wide pivot 캐시 — 키: (Path, mtime, size) 로 파일 변경 감지
+_tg_wide_cache: dict[tuple[Path, float, int], pd.DataFrame] = {}
 
 _TG_INSTANT_KPIS = ("q_time_min", "wait_ratio", "wip", "available_tool_ratio")
 _TG_WINDOW_KPIS = ("utilization_avg", "setup_ratio_avg")
@@ -72,7 +72,7 @@ def load_kpi_snapshot(
             chunk = chunk[
                 (chunk["snapshot_time"].astype(float) == snapshot_time)
                 & chunk["kpi_name"].isin(_TOOL_KPIS)
-            ]
+            ].copy()
             if chunk.empty:
                 continue
             chunk["toolgroup"] = chunk["scope"].map(_tool_id_to_toolgroup)
@@ -115,9 +115,11 @@ def load_kpi_snapshot(
 
 
 def _load_tg_wide(csv_dir: Path) -> pd.DataFrame:
-    """kpi_toolgroup.csv를 전체 wide 형태로 로드 (캐시)."""
-    if csv_dir not in _tg_wide_cache:
-        tg_path = csv_dir / "kpi_toolgroup.csv"
+    """kpi_toolgroup.csv를 전체 wide 형태로 로드 (캐시). 파일 변경 시 자동 무효화."""
+    tg_path = csv_dir / "kpi_toolgroup.csv"
+    stat = tg_path.stat()
+    cache_key = (csv_dir, stat.st_mtime, stat.st_size)
+    if cache_key not in _tg_wide_cache:
         tg_long = pd.read_csv(
             tg_path,
             usecols=["snapshot_time", "scope", "kpi_name", "value", "window_minutes"],
@@ -143,9 +145,10 @@ def _load_tg_wide(csv_dir: Path) -> pd.DataFrame:
         ).reset_index()
 
         wide = wide.merge(util_wide, on=["snapshot_time", "toolgroup"], how="outer").fillna(0.0)
-        _tg_wide_cache[csv_dir] = wide
+        _tg_wide_cache.clear()  # 이전 캐시 메모리 해제
+        _tg_wide_cache[cache_key] = wide
 
-    return _tg_wide_cache[csv_dir]
+    return _tg_wide_cache[cache_key]
 
 
 def load_kpi_window(

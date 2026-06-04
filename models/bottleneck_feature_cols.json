@@ -1,0 +1,12 @@
+[
+  "snapshot_time",
+  "available_tool_ratio",
+  "q_time_min",
+  "wait_ratio",
+  "wip",
+  "setup_ratio_avg",
+  "utilization_avg",
+  "max_avg_q_time",
+  "max_util",
+  "toolgroup_enc"
+]
