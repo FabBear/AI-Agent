@@ -176,8 +176,6 @@ def _print_solutions(solutions: list[dict]) -> None:
     print("  대응안 생성 결과")
     print("=" * 70)
 
-    _CONF_BAR = {(0.8, 1.0): "●●●", (0.6, 0.8): "●●○", (0.0, 0.6): "●○○"}
-
     for sol in solutions:
         tg = sol["toolgroup"]
         sev = sol["severity"]
@@ -186,7 +184,7 @@ def _print_solutions(solutions: list[dict]) -> None:
 
         for cand in sol["candidates"]:
             conf = cand["confidence"]
-            bar = next(v for (lo, hi), v in _CONF_BAR.items() if lo <= conf < hi)
+            bar = "●●●" if conf >= 0.8 else "●●○" if conf >= 0.6 else "●○○"
             params = {k: v for k, v in cand["params"].items() if v is not None}
             print(f"  [{cand['rank']}] {cand['name']}  신뢰도 {bar} {conf:.0%}")
             print(f"      파라미터: {params}")
