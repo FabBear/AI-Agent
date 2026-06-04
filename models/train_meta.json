@@ -1,0 +1,21 @@
+{
+  "model_type": "kpi_snapshot",
+  "feature_cols": [
+    "snapshot_time",
+    "available_tool_ratio",
+    "q_time_min",
+    "wait_ratio",
+    "wip",
+    "setup_ratio_avg",
+    "utilization_avg",
+    "max_avg_q_time",
+    "max_util",
+    "toolgroup_enc"
+  ],
+  "lookahead_min": 120.0,
+  "metrics": {
+    "roc_auc": 0.9722,
+    "pos_rate_pct": 7.55
+  },
+  "csv_dir": "/Users/hyeonseo/Desktop/semiconductor/Simulation/simulation/sample_csv"
+}
