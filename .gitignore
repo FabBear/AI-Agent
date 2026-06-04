@@ -79,6 +79,10 @@ temp/
 *.bin
 *.safetensors
 *.gguf
+*.ubj
+models/*.pkl
+models/*.json
+models/train_meta.json
 
 # MLflow
 mlruns/
@@ -99,3 +103,7 @@ langchain.db
 
 # uv
 .uv-cache/
+
+# Forward simulation output
+agents/sim_runner/sim_forward_out/
+.venv/
