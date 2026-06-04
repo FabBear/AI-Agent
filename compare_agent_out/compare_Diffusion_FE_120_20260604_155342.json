@@ -1,0 +1,71 @@
+{
+  "process_name": "Diffusion_FE_120",
+  "severity": "HIGH",
+  "snapshot_time": 620.0,
+  "action_effects": [
+    {
+      "label": "A ✅ AI추천",
+      "action_kind": "REQUEUE_TOOL",
+      "description": "Lot_Product_4_2를 Diffusion_FE_120#1 → #3으로 이동",
+      "simulation_confidence": 0.91,
+      "hard_constraints": {
+        "wip_limit_ok": true,
+        "qtime_condition_ok": true,
+        "result": "통과"
+      },
+      "kpi_delta": {
+        "avg_queue_time_min": -45.0,
+        "wip_count": -3,
+        "throughput_delta": 2,
+        "cqt_violation_delta": -2
+      }
+    },
+    {
+      "label": "B",
+      "action_kind": "LOT_HOLD",
+      "description": "Lot_Product_4_2 일시 보류",
+      "simulation_confidence": 0.85,
+      "hard_constraints": {
+        "wip_limit_ok": true,
+        "qtime_condition_ok": false,
+        "result": "Q-time 처리 조건 미달"
+      },
+      "kpi_delta": {
+        "avg_queue_time_min": -10.0,
+        "wip_count": -1,
+        "throughput_delta": -1,
+        "cqt_violation_delta": 1
+      }
+    },
+    {
+      "label": "C",
+      "action_kind": "DISPATCH_RULE_OVERRIDE",
+      "description": "SuperHotLot setup avoidance 규칙 적용 + Lot_Product_3_14 super_hot 지정",
+      "simulation_confidence": 0.78,
+      "hard_constraints": {
+        "wip_limit_ok": true,
+        "qtime_condition_ok": true,
+        "result": "통과"
+      },
+      "kpi_delta": {
+        "avg_queue_time_min": -22.0,
+        "wip_count": -2,
+        "throughput_delta": 1,
+        "cqt_violation_delta": -1
+      }
+    }
+  ],
+  "recommendation": {
+    "action_label": "A",
+    "action_kind": "REQUEUE_TOOL",
+    "reason": "대응안 A (REQUEUE_TOOL)는 avg_queue_time을 45.0분 단축시키고 WIP를 3 감소시키며, throughput을 2 증가시키는 효과가 있어 가장 우수한 성과를 보임. 신뢰도 또한 0.91로 높아 안정적인 결과를 기대할 수 있음. 반면, B는 실행 불가하며 C는 상대적으로 낮은 신뢰도와 효과로 인해 A보다 적합하지 않음."
+  },
+  "approval_info": {
+    "status": "승인",
+    "approved_by": "김현수",
+    "approved_role": "공정 관리자",
+    "approved_at": "2026-06-04 15:53",
+    "comment": "즉시 적용 승인",
+    "rejection_reason": null
+  }
+}
