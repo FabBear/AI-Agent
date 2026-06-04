@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -10,7 +12,7 @@ class SimParamDelta(BaseModel):
     superhotlot_enable: bool | None = None  # 긴급 lot 플래그 활성화 여부
 
     # Dispatching Rule 조정
-    dispatch_rule: str | None = None  # SPT / EDD / FIFO / PRIORITY
+    dispatch_rule: Literal["SPT", "EDD", "FIFO", "PRIORITY"] | None = None
     dispatch_priority_weight: float | None = None  # 우선순위 가중치 조정
 
 
