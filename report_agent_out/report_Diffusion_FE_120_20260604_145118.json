@@ -1,0 +1,422 @@
+{
+  "meta": {
+    "process_name": "Diffusion_FE_120",
+    "severity": "HIGH",
+    "detected_at": "2026-06-02 08:15",
+    "generated_at": "2026-06-04 14:51:18"
+  },
+  "bottleneck_info": {
+    "tool_group": "Diffusion_FE_120",
+    "avg_queue_time_min": 234,
+    "peak_q_time_min": 7269,
+    "utilization_pct": 97.3,
+    "load_ratio": 1.08,
+    "capacity_wph": 10,
+    "load_wph": 10.8,
+    "risk_score": 52.3,
+    "wip_count": 18,
+    "total_tool_count": 11,
+    "available_tool_count": 10,
+    "cqt_violation_count": 4,
+    "production_loss_pct": 12.5,
+    "delayed_orders": 7
+  },
+  "fab_kpi": {
+    "throughput_24h": 8,
+    "tat_min": 1842,
+    "completion_rate_pct": 71.4,
+    "rtf": 0.0,
+    "wip_total": 35,
+    "utilization_avg_pct": 76.2
+  },
+  "bottleneck_trend": [
+    {
+      "snapshot_time_min": 230580,
+      "q_time_min": 7029,
+      "utilization": 1.0,
+      "wip": 14
+    },
+    {
+      "snapshot_time_min": 230640,
+      "q_time_min": 7089,
+      "utilization": 0.97,
+      "wip": 15
+    },
+    {
+      "snapshot_time_min": 230700,
+      "q_time_min": 7149,
+      "utilization": 0.96,
+      "wip": 16
+    },
+    {
+      "snapshot_time_min": 230760,
+      "q_time_min": 7209,
+      "utilization": 0.96,
+      "wip": 17
+    },
+    {
+      "snapshot_time_min": 230820,
+      "q_time_min": 7269,
+      "utilization": 0.96,
+      "wip": 18
+    }
+  ],
+  "feature_trend": [
+    {
+      "time_label": "T-240분",
+      "q_time_min": 7029,
+      "wait_ratio": 0.71,
+      "wip": 14,
+      "max_util": 1.0
+    },
+    {
+      "time_label": "T-180분",
+      "q_time_min": 7089,
+      "wait_ratio": 0.74,
+      "wip": 15,
+      "max_util": 0.97
+    },
+    {
+      "time_label": "T-120분",
+      "q_time_min": 7149,
+      "wait_ratio": 0.77,
+      "wip": 16,
+      "max_util": 0.96
+    },
+    {
+      "time_label": "T-60분",
+      "q_time_min": 7209,
+      "wait_ratio": 0.81,
+      "wip": 17,
+      "max_util": 0.96
+    },
+    {
+      "time_label": "T-0분",
+      "q_time_min": 7269,
+      "wait_ratio": 0.84,
+      "wip": 18,
+      "max_util": 0.96
+    }
+  ],
+  "shap_analysis": {
+    "model": "XGBoost",
+    "snapshot_time": 230820,
+    "toolgroup": "Diffusion_FE_120",
+    "proba": 0.847,
+    "top_features": [
+      {
+        "feature": "max_util",
+        "axis": "가동",
+        "label_ko": "설비 최대 가동률(hot-spot)",
+        "value": 1.0,
+        "shap": 1.149,
+        "share_abs_pct": 28.4,
+        "direction": "병목 쪽으로 기여(+)"
+      },
+      {
+        "feature": "q_time_min_delta_120",
+        "axis": "혼잡",
+        "label_ko": "대기시간 2h 변화",
+        "value": 0.773,
+        "shap": 1.066,
+        "share_abs_pct": 26.3,
+        "direction": "병목 쪽으로 기여(+)"
+      },
+      {
+        "feature": "wait_ratio_delta_120",
+        "axis": "혼잡",
+        "label_ko": "대기비율 2h 변화",
+        "value": 0.5,
+        "shap": 0.547,
+        "share_abs_pct": 13.5,
+        "direction": "병목 쪽으로 기여(+)"
+      }
+    ]
+  },
+  "tool_status": [
+    {
+      "tool_id": "Diffusion_FE_120#1",
+      "state": "RUN",
+      "wip": 3
+    },
+    {
+      "tool_id": "Diffusion_FE_120#2",
+      "state": "RUN",
+      "wip": 2
+    },
+    {
+      "tool_id": "Diffusion_FE_120#3",
+      "state": "IDLE",
+      "wip": 0
+    },
+    {
+      "tool_id": "Diffusion_FE_120#4",
+      "state": "RUN",
+      "wip": 2
+    },
+    {
+      "tool_id": "Diffusion_FE_120#5",
+      "state": "RUN",
+      "wip": 2
+    },
+    {
+      "tool_id": "Diffusion_FE_120#6",
+      "state": "RUN",
+      "wip": 3
+    },
+    {
+      "tool_id": "Diffusion_FE_120#7",
+      "state": "RUN",
+      "wip": 2
+    },
+    {
+      "tool_id": "Diffusion_FE_120#8",
+      "state": "RUN",
+      "wip": 1
+    },
+    {
+      "tool_id": "Diffusion_FE_120#9",
+      "state": "RUN",
+      "wip": 2
+    },
+    {
+      "tool_id": "Diffusion_FE_120#10",
+      "state": "RUN",
+      "wip": 1
+    },
+    {
+      "tool_id": "Diffusion_FE_120#11",
+      "state": "DOWN",
+      "wip": 0
+    }
+  ],
+  "affected_lots_detail": [
+    {
+      "lot_id": "Lot_Product_4_2",
+      "product": "Product_4",
+      "priority": 10,
+      "queue_time_min": 234,
+      "is_super_hot": false,
+      "due_date_sim_min": 42693,
+      "cr": 0.72
+    },
+    {
+      "lot_id": "Lot_Product_4_3",
+      "product": "Product_4",
+      "priority": 10,
+      "queue_time_min": 208,
+      "is_super_hot": false,
+      "due_date_sim_min": 42744,
+      "cr": 0.78
+    },
+    {
+      "lot_id": "Lot_Product_3_4",
+      "product": "Product_3",
+      "priority": 10,
+      "queue_time_min": 156,
+      "is_super_hot": false,
+      "due_date_sim_min": 48012,
+      "cr": 0.85
+    },
+    {
+      "lot_id": "Lot_Product_3_5",
+      "product": "Product_3",
+      "priority": 10,
+      "queue_time_min": 104,
+      "is_super_hot": false,
+      "due_date_sim_min": 48012,
+      "cr": 0.91
+    },
+    {
+      "lot_id": "HotLot_4",
+      "product": "Product_4",
+      "priority": 20,
+      "queue_time_min": 157,
+      "is_super_hot": false,
+      "due_date_sim_min": 28701,
+      "cr": 0.68
+    },
+    {
+      "lot_id": "SuperHotLot",
+      "product": "Product_3",
+      "priority": 30,
+      "queue_time_min": 105,
+      "is_super_hot": true,
+      "due_date_sim_min": 48012,
+      "cr": 0.95
+    },
+    {
+      "lot_id": "Lot_Product_4_4",
+      "product": "Product_4",
+      "priority": 10,
+      "queue_time_min": 89,
+      "is_super_hot": false,
+      "due_date_sim_min": 42796,
+      "cr": 1.02
+    }
+  ],
+  "diffusion_analysis": {
+    "is_bottleneck": true,
+    "bottleneck_location": "Diffusion_FE_120 (Step 1)",
+    "diffusion_path": [
+      "Diffusion_FE_120 → DefMEt_FE_118",
+      "DefMEt_FE_118 → WE_FE_84"
+    ],
+    "affected_processes": [
+      {
+        "process": "DefMEt_FE_118",
+        "utilization_pct": 45.2,
+        "capacity_wph": 18,
+        "load_wph": 8.1,
+        "status": "영향"
+      },
+      {
+        "process": "WE_FE_84",
+        "utilization_pct": 38.1,
+        "capacity_wph": 22,
+        "load_wph": 8.4,
+        "status": "영향"
+      },
+      {
+        "process": "TF_Met_FE_45",
+        "utilization_pct": 29.3,
+        "capacity_wph": 20,
+        "load_wph": 5.9,
+        "status": "정상"
+      },
+      {
+        "process": "Litho_FE_200",
+        "utilization_pct": 22.0,
+        "capacity_wph": 25,
+        "load_wph": 5.5,
+        "status": "정상"
+      }
+    ],
+    "forward_simulation": {
+      "horizon_min": 120,
+      "results": [
+        {
+          "toolgroup": "Diffusion_FE_120",
+          "q_time_min_future": 7269,
+          "wait_ratio_future": 0.84,
+          "wip_future": 18,
+          "utilization_avg_future": 0.96,
+          "y_bottleneck": 1
+        },
+        {
+          "toolgroup": "DefMEt_FE_118",
+          "q_time_min_future": 156,
+          "wait_ratio_future": 0.52,
+          "wip_future": 8,
+          "utilization_avg_future": 0.71,
+          "y_bottleneck": 1
+        },
+        {
+          "toolgroup": "WE_FE_84",
+          "q_time_min_future": 45,
+          "wait_ratio_future": 0.21,
+          "wip_future": 4,
+          "utilization_avg_future": 0.38,
+          "y_bottleneck": 0
+        }
+      ]
+    },
+    "line_stop_expected_min": 180,
+    "risk_level": "HIGH"
+  },
+  "cause_analysis": [
+    {
+      "rank": 1,
+      "cause": "투입량 급증",
+      "contribution_pct": 45.2,
+      "recommended_action": "투입 스케줄 조정",
+      "similar_case": "2025-11-14 동일 공정 병목 발생 (해결: 투입 분산)"
+    },
+    {
+      "rank": 2,
+      "cause": "특정 호기 집중 (Diffusion_FE_120#1)",
+      "contribution_pct": 31.8,
+      "recommended_action": "REQUEUE_TOOL로 부하 분산",
+      "similar_case": "2025-09-03 집중 할당 이슈 (해결: 리큐잉)"
+    },
+    {
+      "rank": 3,
+      "cause": "PM 예정 호기 선배정",
+      "contribution_pct": 22.9,
+      "recommended_action": "PM 일정 확인 후 재배정",
+      "similar_case": "없음"
+    }
+  ],
+  "action_effects": [
+    {
+      "label": "A",
+      "action_kind": "REQUEUE_TOOL",
+      "description": "Lot_Product_4_2를 Diffusion_FE_120#1 → #3으로 이동",
+      "simulation_confidence": 0.91,
+      "hard_constraints": {
+        "wip_limit_ok": true,
+        "qtime_condition_ok": true,
+        "result": "통과"
+      },
+      "kpi_delta": {
+        "avg_queue_time_min": -45.0,
+        "wip_count": -3,
+        "throughput_delta": 2
+      }
+    },
+    {
+      "label": "B",
+      "action_kind": "LOT_HOLD",
+      "description": "Lot_Product_4_2 일시 보류",
+      "simulation_confidence": 0.85,
+      "hard_constraints": {
+        "wip_limit_ok": true,
+        "qtime_condition_ok": false,
+        "result": "Q-time 초과 위험"
+      },
+      "kpi_delta": {
+        "avg_queue_time_min": -10.0,
+        "wip_count": -1,
+        "throughput_delta": -1
+      }
+    },
+    {
+      "label": "C",
+      "action_kind": "DISPATCH_RULE_OVERRIDE",
+      "description": "superhotlot setupavoidance 규칙 적용",
+      "simulation_confidence": 0.78,
+      "hard_constraints": {
+        "wip_limit_ok": true,
+        "qtime_condition_ok": true,
+        "result": "통과"
+      },
+      "kpi_delta": {
+        "avg_queue_time_min": -22.0,
+        "wip_count": -2,
+        "throughput_delta": 1
+      }
+    }
+  ],
+  "recommendation": {
+    "action_label": "A",
+    "action_kind": "REQUEUE_TOOL",
+    "reason": "가장 큰 대기시간 감소 효과 (-45분), 처리량 증가"
+  },
+  "approval_info": {
+    "status": "승인",
+    "approved_by": "김현수",
+    "approved_role": "공정 관리자",
+    "approved_at": "2026-06-02 09:30",
+    "comment": "즉시 적용 승인",
+    "rejection_reason": null
+  },
+  "report_sections": {
+    "header": "# FAB 병목 대응 보고서\n\n| 항목 | 내용 |\n|------|------|\n| 공정명 | `Diffusion_FE_120` |\n| 심각도 | **🔴 HIGH** |\n| 탐지시각 | 2026-06-02 08:15 |\n| 보고서 생성일시 | 2026-06-04 14:50 |\n\n---",
+    "summary": "## 1. 요약\n\n> **Diffusion_FE_120 공정에서 HIGH 심각도의 병목 상황 발생, risk_score는 52.3임.**  \n> **현재 load_ratio는 1.08로 과부하 상태이며, 생산 손실률은 12.5%에 달함.**  \n> **즉각적인 긴급 조치가 필요함.**\n\n| 지표 | 값 |\n|------|----|\n| 심각도 | HIGH |\n| risk_score | 52.3 |\n| load_ratio | 1.08 |\n| 생산 손실률 | 12.5% |\n| 지연 주문 수 | 7건 |\n| 현재 평균 대기시간 | 234분 |\n| 최대 대기시간 | 7269분 |\n| CQT 위반 Lot 수 | 4건 |\n| 가용 호기 | 10 / 11대 |",
+    "diffusion": "## 2. 확산 영향 분석\n\n**탐지시각**: 2026-06-02 08:15\n\n### ① 병목 발생 여부 및 위치\n- **병목 발생 여부**: 발생함\n- **병목 위치**: Diffusion_FE_120 (Step 1)\n- **확산 경로**: Diffusion_FE_120 → DefMEt_FE_118 → WE_FE_84\n\n### ② 확산 현황 (공정별 가동률 및 Capacity 비교)\n\n| 공정          | 가동률  | Capacity(WPH) | Load(WPH) | 상태 |\n|---------------|---------|---------------|-----------|------|\n| DefMEt_FE_118 | 45.2%   | 18            | 8.1       | 영향 |\n| WE_FE_84      | 38.1%   | 22            | 8.4       | 영향 |\n| TF_Met_FE_45  | 29.3%   | 20            | 5.9       | 정상 |\n| Litho_FE_200  | 22.0%   | 25            | 5.5       | 정상 |\n\n### ③ 위험도 및 전 라인 정지 예상 시간\n- **위험도**: HIGH\n- **전 라인 정지 예상**: 180분 이내\n- **위험도 해석**: 비정상 상태로 즉각적인 모니터링이 필요함\n- **병목 추이**: Q-time과 WIP가 지속적으로 심화되고 있음\n\n### ④ FAB 전체 영향\n\n| 지표          | 값   |\n|---------------|------|\n| 24시간 처리량 | 8건  |\n| 평균 TAT      | 1842분 |\n| 완료율        | 71.4% |\n| RTF           | 0.0  |\n| 전체 WIP      | 35개  |\n\n### ⑤ Forward Simulation (120분 후 예측)\n\n| Tool Group      | q_time (미래) | wait_ratio (미래) | WIP (미래) | 병목 예측 |\n|------------------|----------------|-------------------|------------|----------|\n| Diffusion_FE_120 | 7269분         | 0.84              | 18         | ✅ 병목   |\n| DefMEt_FE_118    | 156분          | 0.52              | 8          | ✅ 병목   |\n| WE_FE_84         | 45분           | 0.21              | 4          | ✅ 정상   |",
+    "cause": "## 3. 원인 분석 TOP 3\n\n| 순위 | 원인                     | 기여도 | 권고 조치                     |\n|------|--------------------------|--------|-------------------------------|\n| 1    | 투입량 급증              | 45.2   | 투입 스케줄 조정             |\n| 2    | 특정 호기 집중 (Diffusion_FE_120#1) | 31.8   | REQUEUE_TOOL로 부하 분산     |\n| 3    | PM 예정 호기 선배정      | 22.9   | PM 일정 확인 후 재배정       |\n\n### 유사 과거 사례\n- 투입량 급증: 2025-11-14 동일 공정 병목 발생 (해결: 투입 분산)\n- 특정 호기 집중 (Diffusion_FE_120#1): 2025-09-03 집중 할당 이슈 (해결: 리큐잉)\n- PM 예정 호기 선배정: - 없음\n\n### ML 모델 SHAP 분석 (Top 3 Feature)\n> 모델: XGBoost | 병목 예측 확률: 0.847\n\n| 피처명                     | 축   | 설명                     | 현재값 | 기여도(%) | 방향                     |\n|----------------------------|------|--------------------------|--------|----------|--------------------------|\n| max_util                   | 가동 | 설비 최대 가동률(hot-spot) | 1.0    | 28.4     | 병목 쪽으로 기여(+)      |\n| q_time_min_delta_120       | 혼잡 | 대기시간 2h 변화        | 0.773  | 26.3     | 병목 쪽으로 기여(+)      |\n| wait_ratio_delta_120       | 혼잡 | 대기비율 2h 변화        | 0.5    | 13.5     | 병목 쪽으로 기여(+)      |\n\n### feature 트렌드 (탐지 전 4시간)\n\n| 시각     | q_time_min | wait_ratio | wip | max_util |\n|----------|------------|------------|-----|----------|\n| T-240분  | 7029       | 0.71       | 14  | 1.0      |\n| T-180분  | 7089       | 0.74       | 15  | 0.97     |\n| T-120분  | 7149       | 0.77       | 16  | 0.96     |\n| T-60분   | 7209       | 0.81       | 17  | 0.96     |\n| T-0분    | 7269       | 0.84       | 18  | 0.96     |\n\n### 호기 상태 요약\n- **가동 중**: 10대\n- **비가동 (DOWN/PM)**: Diffusion_FE_120#11\n- **IDLE**: Diffusion_FE_120#3",
+    "actions": "## 4. 승인된 대응안\n\n### ① 승인된 대응안 예상 효과\n- **대응안**: REQUEUE_TOOL — Lot_Product_4_2를 Diffusion_FE_120#1 → #3으로 이동\n- **선택 이유**: 가장 큰 대기시간 감소 효과 (-45분), 처리량 증가\n- **예상 효과 요약**: 평균 대기시간이 45분 감소하고, WIP가 3 감소하며, 처리량이 2 증가함.\n\n### ② 대응안 A / B / C 비교\n\n| 대응안 | 종류              | 설명                                        | 대기시간 변화 | WIP 변화 | 처리량 변화 | Hard Constraint | 시뮬 신뢰도 |\n|--------|------------------|-------------------------------------------|-------------|---------|-----------|----------------|------------|\n| A      | REQUEUE_TOOL     | Lot_Product_4_2를 Diffusion_FE_120#1 → #3으로 이동 | -45분       | -3      | +2        | 통과           | 91%        |\n| B      | LOT_HOLD         | Lot_Product_4_2 일시 보류                   | -10분       | -1      | -1        | Q-time 초과 위험 | 85%        |\n| C      | DISPATCH_RULE_OVERRIDE | superhotlot setupavoidance 규칙 적용      | -22분       | -2      | +1        | 통과           | 78%        |\n\n### ③ 영향 Lot 현황\n\n| Lot ID          | 제품      | 우선순위 | CR   | 대기시간 | SuperHot |\n|-----------------|-----------|---------|------|---------|---------|\n| Lot_Product_4_2 | Product_4 | 10      | 0.72 | 234     |         |\n| Lot_Product_4_3 | Product_4 | 10      | 0.78 | 208     |         |\n| Lot_Product_3_4 | Product_3 | 10      | 0.85 | 156     |         |\n| Lot_Product_3_5 | Product_3 | 10      | 0.91 | 104     |         |\n| HotLot_4        | Product_4 | 20      | 0.68 | 157     |         |\n| SuperHotLot     | Product_3 | 30      | 0.95 | 105     | ✅       |\n| Lot_Product_4_4 | Product_4 | 10      | 1.02 | 89      |         |",
+    "approval": "## 5. 승인 정보\n\n| 항목 | 내용 |\n|------|------|\n| 탐지시각 | 2026-06-02 08:15 |\n| 승인자 | 김현수 (공정 관리자) |\n| 상태 | 승인 |\n| 승인일시 | 2026-06-02 09:30 |\n| 의견 | 즉시 적용 승인 |"
+  },
+  "full_markdown": "# FAB 병목 대응 보고서\n\n| 항목 | 내용 |\n|------|------|\n| 공정명 | `Diffusion_FE_120` |\n| 심각도 | **🔴 HIGH** |\n| 탐지시각 | 2026-06-02 08:15 |\n| 보고서 생성일시 | 2026-06-04 14:50 |\n\n---\n\n## 1. 요약\n\n> **Diffusion_FE_120 공정에서 HIGH 심각도의 병목 상황 발생, risk_score는 52.3임.**  \n> **현재 load_ratio는 1.08로 과부하 상태이며, 생산 손실률은 12.5%에 달함.**  \n> **즉각적인 긴급 조치가 필요함.**\n\n| 지표 | 값 |\n|------|----|\n| 심각도 | HIGH |\n| risk_score | 52.3 |\n| load_ratio | 1.08 |\n| 생산 손실률 | 12.5% |\n| 지연 주문 수 | 7건 |\n| 현재 평균 대기시간 | 234분 |\n| 최대 대기시간 | 7269분 |\n| CQT 위반 Lot 수 | 4건 |\n| 가용 호기 | 10 / 11대 |\n\n## 2. 확산 영향 분석\n\n**탐지시각**: 2026-06-02 08:15\n\n### ① 병목 발생 여부 및 위치\n- **병목 발생 여부**: 발생함\n- **병목 위치**: Diffusion_FE_120 (Step 1)\n- **확산 경로**: Diffusion_FE_120 → DefMEt_FE_118 → WE_FE_84\n\n### ② 확산 현황 (공정별 가동률 및 Capacity 비교)\n\n| 공정          | 가동률  | Capacity(WPH) | Load(WPH) | 상태 |\n|---------------|---------|---------------|-----------|------|\n| DefMEt_FE_118 | 45.2%   | 18            | 8.1       | 영향 |\n| WE_FE_84      | 38.1%   | 22            | 8.4       | 영향 |\n| TF_Met_FE_45  | 29.3%   | 20            | 5.9       | 정상 |\n| Litho_FE_200  | 22.0%   | 25            | 5.5       | 정상 |\n\n### ③ 위험도 및 전 라인 정지 예상 시간\n- **위험도**: HIGH\n- **전 라인 정지 예상**: 180분 이내\n- **위험도 해석**: 비정상 상태로 즉각적인 모니터링이 필요함\n- **병목 추이**: Q-time과 WIP가 지속적으로 심화되고 있음\n\n### ④ FAB 전체 영향\n\n| 지표          | 값   |\n|---------------|------|\n| 24시간 처리량 | 8건  |\n| 평균 TAT      | 1842분 |\n| 완료율        | 71.4% |\n| RTF           | 0.0  |\n| 전체 WIP      | 35개  |\n\n### ⑤ Forward Simulation (120분 후 예측)\n\n| Tool Group      | q_time (미래) | wait_ratio (미래) | WIP (미래) | 병목 예측 |\n|------------------|----------------|-------------------|------------|----------|\n| Diffusion_FE_120 | 7269분         | 0.84              | 18         | ✅ 병목   |\n| DefMEt_FE_118    | 156분          | 0.52              | 8          | ✅ 병목   |\n| WE_FE_84         | 45분           | 0.21              | 4          | ✅ 정상   |\n\n## 3. 원인 분석 TOP 3\n\n| 순위 | 원인                     | 기여도 | 권고 조치                     |\n|------|--------------------------|--------|-------------------------------|\n| 1    | 투입량 급증              | 45.2   | 투입 스케줄 조정             |\n| 2    | 특정 호기 집중 (Diffusion_FE_120#1) | 31.8   | REQUEUE_TOOL로 부하 분산     |\n| 3    | PM 예정 호기 선배정      | 22.9   | PM 일정 확인 후 재배정       |\n\n### 유사 과거 사례\n- 투입량 급증: 2025-11-14 동일 공정 병목 발생 (해결: 투입 분산)\n- 특정 호기 집중 (Diffusion_FE_120#1): 2025-09-03 집중 할당 이슈 (해결: 리큐잉)\n- PM 예정 호기 선배정: - 없음\n\n### ML 모델 SHAP 분석 (Top 3 Feature)\n> 모델: XGBoost | 병목 예측 확률: 0.847\n\n| 피처명                     | 축   | 설명                     | 현재값 | 기여도(%) | 방향                     |\n|----------------------------|------|--------------------------|--------|----------|--------------------------|\n| max_util                   | 가동 | 설비 최대 가동률(hot-spot) | 1.0    | 28.4     | 병목 쪽으로 기여(+)      |\n| q_time_min_delta_120       | 혼잡 | 대기시간 2h 변화        | 0.773  | 26.3     | 병목 쪽으로 기여(+)      |\n| wait_ratio_delta_120       | 혼잡 | 대기비율 2h 변화        | 0.5    | 13.5     | 병목 쪽으로 기여(+)      |\n\n### feature 트렌드 (탐지 전 4시간)\n\n| 시각     | q_time_min | wait_ratio | wip | max_util |\n|----------|------------|------------|-----|----------|\n| T-240분  | 7029       | 0.71       | 14  | 1.0      |\n| T-180분  | 7089       | 0.74       | 15  | 0.97     |\n| T-120분  | 7149       | 0.77       | 16  | 0.96     |\n| T-60분   | 7209       | 0.81       | 17  | 0.96     |\n| T-0분    | 7269       | 0.84       | 18  | 0.96     |\n\n### 호기 상태 요약\n- **가동 중**: 10대\n- **비가동 (DOWN/PM)**: Diffusion_FE_120#11\n- **IDLE**: Diffusion_FE_120#3\n\n## 4. 승인된 대응안\n\n### ① 승인된 대응안 예상 효과\n- **대응안**: REQUEUE_TOOL — Lot_Product_4_2를 Diffusion_FE_120#1 → #3으로 이동\n- **선택 이유**: 가장 큰 대기시간 감소 효과 (-45분), 처리량 증가\n- **예상 효과 요약**: 평균 대기시간이 45분 감소하고, WIP가 3 감소하며, 처리량이 2 증가함.\n\n### ② 대응안 A / B / C 비교\n\n| 대응안 | 종류              | 설명                                        | 대기시간 변화 | WIP 변화 | 처리량 변화 | Hard Constraint | 시뮬 신뢰도 |\n|--------|------------------|-------------------------------------------|-------------|---------|-----------|----------------|------------|\n| A      | REQUEUE_TOOL     | Lot_Product_4_2를 Diffusion_FE_120#1 → #3으로 이동 | -45분       | -3      | +2        | 통과           | 91%        |\n| B      | LOT_HOLD         | Lot_Product_4_2 일시 보류                   | -10분       | -1      | -1        | Q-time 초과 위험 | 85%        |\n| C      | DISPATCH_RULE_OVERRIDE | superhotlot setupavoidance 규칙 적용      | -22분       | -2      | +1        | 통과           | 78%        |\n\n### ③ 영향 Lot 현황\n\n| Lot ID          | 제품      | 우선순위 | CR   | 대기시간 | SuperHot |\n|-----------------|-----------|---------|------|---------|---------|\n| Lot_Product_4_2 | Product_4 | 10      | 0.72 | 234     |         |\n| Lot_Product_4_3 | Product_4 | 10      | 0.78 | 208     |         |\n| Lot_Product_3_4 | Product_3 | 10      | 0.85 | 156     |         |\n| Lot_Product_3_5 | Product_3 | 10      | 0.91 | 104     |         |\n| HotLot_4        | Product_4 | 20      | 0.68 | 157     |         |\n| SuperHotLot     | Product_3 | 30      | 0.95 | 105     | ✅       |\n| Lot_Product_4_4 | Product_4 | 10      | 1.02 | 89      |         |\n\n## 5. 승인 정보\n\n| 항목 | 내용 |\n|------|------|\n| 탐지시각 | 2026-06-02 08:15 |\n| 승인자 | 김현수 (공정 관리자) |\n| 상태 | 승인 |\n| 승인일시 | 2026-06-02 09:30 |\n| 의견 | 즉시 적용 승인 |"
+}
