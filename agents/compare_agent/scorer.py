@@ -13,9 +13,10 @@ def rank_score(state: dict) -> dict:
 
     def rank_key(c):
         kd = c["kpi_delta"]
-        qtime = abs(kd.get("avg_queue_time_min", 0))
-        throughput = kd.get("throughput_delta", 0)
-        wip = abs(kd.get("wip_count", 0))
+        # delta가 음수일수록 개선 → 부호 반전해 클수록 유리하게 정렬
+        qtime = -kd.get("avg_queue_time_min", 0.0)
+        throughput = kd.get("throughput_delta", 0.0)
+        wip = -kd.get("wip_count", 0.0)
         return (qtime, throughput, wip)
 
     sorted_candidates = sorted(candidates, key=rank_key, reverse=True)

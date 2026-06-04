@@ -107,9 +107,9 @@ _SYS = """[역할]
 
 def node_validate_input(state: CompareState) -> dict:
     """입력 파싱 및 필드 검증 — LLM 불필요"""
-    candidates = state["action_candidates"]
+    candidates = state.get("action_candidates")
     if not candidates:
-        raise ValueError("action_candidates가 비어 있습니다.")
+        raise ValueError("action_candidates가 비어 있거나 누락되었습니다.")
     required = {"label", "action_kind", "description", "kpi_delta", "simulation_confidence"}
     for c in candidates:
         missing = required - set(c.keys())
