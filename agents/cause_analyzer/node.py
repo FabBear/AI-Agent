@@ -39,6 +39,8 @@ def analyze_cause(
     csv_dir: str | Path = _DEFAULT_CSV,
     run_sim: bool = True,
 ) -> PipelineState:
+    if not state["kpi_snapshot"]:
+        return {**state, "cause_reports": []}
     alerts = state["alerts"]
     kpi_map = {k.toolgroup: k for k in state["kpi_snapshot"]}
     snapshot_time = state["kpi_snapshot"][0].snapshot_time

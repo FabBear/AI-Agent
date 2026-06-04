@@ -61,6 +61,8 @@ def refine_candidates(
     candidates: list[SolutionCandidate],
 ) -> list[SolutionCandidate]:
     """LLM으로 대응안 설명 보강. 실패 시 원본 반환."""
+    if not candidates:
+        return candidates
     hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN", "")
     if not hf_token or hf_token.startswith("your_"):
         return candidates

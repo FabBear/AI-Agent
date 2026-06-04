@@ -87,7 +87,7 @@ def _confidence(cause_report: CauseReport, action: str) -> float:
         0.05 if action == "release_throttle" and cause_report.upstream_suspects else 0.0
     )
 
-    return round(min(base + trend_bonus + upstream_bonus, 0.95), 2)
+    return round(max(min(base + trend_bonus + upstream_bonus, 0.95), 0.0), 2)
 
 
 def generate_candidates(

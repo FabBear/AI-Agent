@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pandas as pd
 from sqlalchemy import text
 
 from agents.sim_runner.db_connector import get_session, query_df
@@ -117,10 +118,13 @@ def _build_wip_snapshot(t0: float) -> list[WipRow]:
     for _, row in lot_meta_df.iterrows():
         pname = str(row["product_name"])
         if pname not in meta_map:
+            w = row.get("wafers_per_lot")
+            p = row.get("priority")
+            s = row.get("is_super_hot")
             meta_map[pname] = {
-                "wafers_per_lot": int(row.get("wafers_per_lot") or 25),
-                "priority": int(row.get("priority") or 10),
-                "is_super_hot": bool(row.get("is_super_hot") or False),
+                "wafers_per_lot": int(w) if pd.notna(w) else 25,
+                "priority": int(p) if pd.notna(p) else 10,
+                "is_super_hot": bool(s) if pd.notna(s) else False,
             }
 
     route_map = _load_route_map()
@@ -254,7 +258,7 @@ def insert_t0_snapshot(scenario_id: str, t0: float) -> tuple[int, int]:
 
     session = get_session()
     try:
-        for w in wip_rows:
+        if wip_rows:
             session.execute(
                 text("""
                 INSERT INTO mes_wip_snapshot
@@ -266,41 +270,47 @@ def insert_t0_snapshot(scenario_id: str, t0: float) -> tuple[int, int]:
                         :status, :tg, :tool_id, :qpos, :due,
                         :prio, :rem, :proc_rem, :wafers, :product, :super)
             """),
-                {
-                    "sid": scenario_id,
-                    "t0": t0,
-                    "lot_id": w.lot_id,
-                    "route_id": w.route_id,
-                    "step_seq": w.current_step_seq,
-                    "status": w.status,
-                    "tg": w.tool_group,
-                    "tool_id": w.tool_id,
-                    "qpos": w.queue_position,
-                    "due": w.due_date_sim,
-                    "prio": w.priority,
-                    "rem": w.rem_steps,
-                    "proc_rem": w.processing_remaining_min,
-                    "wafers": w.wafers_per_lot,
-                    "product": w.product,
-                    "super": w.is_super_hot,
-                },
+                [
+                    {
+                        "sid": scenario_id,
+                        "t0": t0,
+                        "lot_id": w.lot_id,
+                        "route_id": w.route_id,
+                        "step_seq": w.current_step_seq,
+                        "status": w.status,
+                        "tg": w.tool_group,
+                        "tool_id": w.tool_id,
+                        "qpos": w.queue_position,
+                        "due": w.due_date_sim,
+                        "prio": w.priority,
+                        "rem": w.rem_steps,
+                        "proc_rem": w.processing_remaining_min,
+                        "wafers": w.wafers_per_lot,
+                        "product": w.product,
+                        "super": w.is_super_hot,
+                    }
+                    for w in wip_rows
+                ],
             )
 
-        for t in tool_rows:
+        if tool_rows:
             session.execute(
                 text("""
                 INSERT INTO mes_tool_snapshot
                     (scenario_id, tool_id, tool_group, op_state, current_setup, held_lot_id)
                 VALUES (:sid, :tid, :tg, :op, :setup, :held)
             """),
-                {
-                    "sid": scenario_id,
-                    "tid": t.tool_id,
-                    "tg": t.tool_group,
-                    "op": t.op_state,
-                    "setup": t.current_setup,
-                    "held": t.held_lot_id,
-                },
+                [
+                    {
+                        "sid": scenario_id,
+                        "tid": t.tool_id,
+                        "tg": t.tool_group,
+                        "op": t.op_state,
+                        "setup": t.current_setup,
+                        "held": t.held_lot_id,
+                    }
+                    for t in tool_rows
+                ],
             )
 
         session.commit()
