@@ -140,7 +140,7 @@ Load Ratio 해석:
 
 def write_summary(state: ReportState) -> dict:
     """1. 요약 — 3줄 핵심 요약 + 핵심 지표"""
-    bi = state["bottleneck_info"]
+    bi = state.get("bottleneck_info") or {}
     section = _llm_write(
         _SYS,
         f"""아래 데이터를 바탕으로 FAB 병목 보고서의 '요약' 섹션을 작성하세요.
@@ -176,7 +176,7 @@ def write_summary(state: ReportState) -> dict:
 
 def write_diffusion(state: ReportState) -> dict:
     """2. 확산 영향 분석"""
-    da = state["diffusion_analysis"]
+    da = state.get("diffusion_analysis") or {}
     fab = state.get("fab_kpi", {})
     trend = state.get("bottleneck_trend", [])
     section = _llm_write(
@@ -232,7 +232,7 @@ FAB 전체 KPI: {json.dumps(fab, ensure_ascii=False)}
 
 def write_cause(state: ReportState) -> dict:
     """3. 원인 분석 TOP 3"""
-    ca = state["cause_analysis"]
+    ca = state.get("cause_analysis") or []
     tools = state.get("tool_status", [])
     ft = state.get("feature_trend", [])
     shap = state.get("shap_analysis", {})
@@ -281,9 +281,9 @@ ML SHAP 분석: {json.dumps(shap, ensure_ascii=False)}
 
 def write_actions(state: ReportState) -> dict:
     """4. 승인된 대응안 — 효과 요약 + A/B/C 비교표"""
-    effects = state["action_effects"]
-    rec = state["recommendation"]
-    ai = state["approval_info"]
+    effects = state.get("action_effects") or []
+    rec = state.get("recommendation") or {}
+    ai = state.get("approval_info") or {}
     is_rejected = ai.get("status") == "반려"
 
     if is_rejected:
@@ -313,7 +313,8 @@ def write_actions(state: ReportState) -> dict:
         )
     else:
         approved = next(
-            (e for e in effects if e.get("label") == rec.get("action_label")), effects[0]
+            (e for e in effects if e.get("label") == rec.get("action_label")),
+            effects[0] if effects else {}
         )
         lots = state.get("affected_lots_detail", [])
         section = _llm_write(

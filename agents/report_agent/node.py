@@ -35,16 +35,15 @@ REPORTS_DIR = _ROOT / "report_agent_out"
 def node_write_header(state: ReportState) -> dict:
     """헤더 — LLM 불필요, 구조화 데이터로 직접 생성"""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    badge = {"HIGH": "🔴 HIGH", "MEDIUM": "🟡 MEDIUM", "LOW": "🟢 LOW"}.get(
-        state["severity"], state["severity"]
-    )
+    severity = state.get("severity", "MEDIUM")
+    badge = {"HIGH": "🔴 HIGH", "MEDIUM": "🟡 MEDIUM", "LOW": "🟢 LOW"}.get(severity, severity)
     header = (
         f"# FAB 병목 대응 보고서\n\n"
         f"| 항목 | 내용 |\n"
         f"|------|------|\n"
-        f"| 공정명 | `{state['process_name']}` |\n"
+        f"| 공정명 | `{state.get('process_name', '-')}` |\n"
         f"| 심각도 | **{badge}** |\n"
-        f"| 탐지시각 | {state['detected_at']} |\n"
+        f"| 탐지시각 | {state.get('detected_at', '-')} |\n"
         f"| 보고서 생성일시 | {now} |\n\n"
         f"---"
     )
@@ -53,7 +52,7 @@ def node_write_header(state: ReportState) -> dict:
 
 def node_write_approval(state: ReportState) -> dict:
     """5. 승인 정보 — LLM 불필요, 구조화 데이터로 직접 생성"""
-    ai = state["approval_info"]
+    ai = state.get("approval_info") or {}
     is_rejected = ai.get("status") == "반려"
     detected_at = state.get("detected_at", "-")
 
@@ -100,30 +99,30 @@ def node_save(state: ReportState) -> dict:
     """Markdown + JSON 파일로 저장"""
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base = f"report_{state['process_name']}_{timestamp}"
+    base = f"report_{state.get('process_name', 'unknown')}_{timestamp}"
 
     md_path = REPORTS_DIR / f"{base}.md"
-    md_path.write_text(state["final_report"], encoding="utf-8")
+    md_path.write_text(state.get("final_report", ""), encoding="utf-8")
 
     report_json = {
         "meta": {
-            "process_name": state["process_name"],
-            "severity": state["severity"],
-            "detected_at": state["detected_at"],
+            "process_name": state.get("process_name", "-"),
+            "severity": state.get("severity", "-"),
+            "detected_at": state.get("detected_at", "-"),
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         },
-        "bottleneck_info":      state["bottleneck_info"],
+        "bottleneck_info":      state.get("bottleneck_info", {}),
         "fab_kpi":              state.get("fab_kpi", {}),
         "bottleneck_trend":     state.get("bottleneck_trend", []),
         "feature_trend":        state.get("feature_trend", []),
         "shap_analysis":        state.get("shap_analysis", {}),
         "tool_status":          state.get("tool_status", []),
         "affected_lots_detail": state.get("affected_lots_detail", []),
-        "diffusion_analysis":   state["diffusion_analysis"],
-        "cause_analysis":       state["cause_analysis"],
-        "action_effects":       state["action_effects"],
-        "recommendation":       state["recommendation"],
-        "approval_info":        state["approval_info"],
+        "diffusion_analysis":   state.get("diffusion_analysis", {}),
+        "cause_analysis":       state.get("cause_analysis", []),
+        "action_effects":       state.get("action_effects", []),
+        "recommendation":       state.get("recommendation", {}),
+        "approval_info":        state.get("approval_info", {}),
         "report_sections": {
             "header":    state.get("section_header", ""),
             "summary":   state.get("section_summary", ""),
