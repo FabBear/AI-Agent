@@ -1,0 +1,198 @@
+{
+  "process_name": "Diffusion_FE_120",
+  "severity": "HIGH",
+  "detected_at": "2026-06-02 08:15",
+
+  "bottleneck_info": {
+    "tool_group": "Diffusion_FE_120",
+    "avg_queue_time_min": 234,
+    "peak_q_time_min": 7269,
+    "utilization_pct": 97.3,
+    "load_ratio": 1.08,
+    "capacity_wph": 10,
+    "load_wph": 10.8,
+    "risk_score": 52.3,
+    "wip_count": 18,
+    "total_tool_count": 11,
+    "available_tool_count": 10,
+    "cqt_violation_count": 4,
+    "production_loss_pct": 12.5,
+    "delayed_orders": 7
+  },
+
+  "fab_kpi": {
+    "throughput_24h": 8,
+    "tat_min": 1842,
+    "completion_rate_pct": 71.4,
+    "rtf": 0.0,
+    "wip_total": 35,
+    "utilization_avg_pct": 76.2
+  },
+
+  "bottleneck_trend": [
+    { "snapshot_time_min": 230580, "q_time_min": 7029, "utilization": 1.00, "wip": 14 },
+    { "snapshot_time_min": 230640, "q_time_min": 7089, "utilization": 0.97, "wip": 15 },
+    { "snapshot_time_min": 230700, "q_time_min": 7149, "utilization": 0.96, "wip": 16 },
+    { "snapshot_time_min": 230760, "q_time_min": 7209, "utilization": 0.96, "wip": 17 },
+    { "snapshot_time_min": 230820, "q_time_min": 7269, "utilization": 0.96, "wip": 18 }
+  ],
+
+  "tool_status": [
+    { "tool_id": "Diffusion_FE_120#1",  "state": "RUN",  "wip": 3 },
+    { "tool_id": "Diffusion_FE_120#2",  "state": "RUN",  "wip": 2 },
+    { "tool_id": "Diffusion_FE_120#3",  "state": "IDLE", "wip": 0 },
+    { "tool_id": "Diffusion_FE_120#4",  "state": "RUN",  "wip": 2 },
+    { "tool_id": "Diffusion_FE_120#5",  "state": "RUN",  "wip": 2 },
+    { "tool_id": "Diffusion_FE_120#6",  "state": "RUN",  "wip": 3 },
+    { "tool_id": "Diffusion_FE_120#7",  "state": "RUN",  "wip": 2 },
+    { "tool_id": "Diffusion_FE_120#8",  "state": "RUN",  "wip": 1 },
+    { "tool_id": "Diffusion_FE_120#9",  "state": "RUN",  "wip": 2 },
+    { "tool_id": "Diffusion_FE_120#10", "state": "RUN",  "wip": 1 },
+    { "tool_id": "Diffusion_FE_120#11", "state": "DOWN", "wip": 0 }
+  ],
+
+  "affected_lots_detail": [
+    { "lot_id": "Lot_Product_4_2",  "product": "Product_4", "priority": 10, "queue_time_min": 234, "is_super_hot": false, "due_date_sim_min": 42693, "cr": 0.72 },
+    { "lot_id": "Lot_Product_4_3",  "product": "Product_4", "priority": 10, "queue_time_min": 208, "is_super_hot": false, "due_date_sim_min": 42744, "cr": 0.78 },
+    { "lot_id": "Lot_Product_3_4",  "product": "Product_3", "priority": 10, "queue_time_min": 156, "is_super_hot": false, "due_date_sim_min": 48012, "cr": 0.85 },
+    { "lot_id": "Lot_Product_3_5",  "product": "Product_3", "priority": 10, "queue_time_min": 104, "is_super_hot": false, "due_date_sim_min": 48012, "cr": 0.91 },
+    { "lot_id": "HotLot_4",         "product": "Product_4", "priority": 20, "queue_time_min": 157, "is_super_hot": false, "due_date_sim_min": 28701, "cr": 0.68 },
+    { "lot_id": "SuperHotLot",      "product": "Product_3", "priority": 30, "queue_time_min": 105, "is_super_hot": true,  "due_date_sim_min": 48012, "cr": 0.95 },
+    { "lot_id": "Lot_Product_4_4",  "product": "Product_4", "priority": 10, "queue_time_min": 89,  "is_super_hot": false, "due_date_sim_min": 42796, "cr": 1.02 }
+  ],
+
+  "diffusion_analysis": {
+    "is_bottleneck": true,
+    "bottleneck_location": "Diffusion_FE_120 (Step 1)",
+    "diffusion_path": [
+      "Diffusion_FE_120 → DefMEt_FE_118",
+      "DefMEt_FE_118 → WE_FE_84"
+    ],
+    "affected_processes": [
+      { "process": "DefMEt_FE_118", "utilization_pct": 45.2, "capacity_wph": 18, "load_wph": 8.1, "status": "영향" },
+      { "process": "WE_FE_84",      "utilization_pct": 38.1, "capacity_wph": 22, "load_wph": 8.4, "status": "영향" },
+      { "process": "TF_Met_FE_45",  "utilization_pct": 29.3, "capacity_wph": 20, "load_wph": 5.9, "status": "정상" },
+      { "process": "Litho_FE_200",  "utilization_pct": 22.0, "capacity_wph": 25, "load_wph": 5.5, "status": "정상" }
+    ],
+    "forward_simulation": {
+      "horizon_min": 120,
+      "results": [
+        { "toolgroup": "Diffusion_FE_120", "q_time_min_future": 7269, "wait_ratio_future": 0.84, "wip_future": 18, "utilization_avg_future": 0.96, "y_bottleneck": 1 },
+        { "toolgroup": "DefMEt_FE_118",    "q_time_min_future": 156,  "wait_ratio_future": 0.52, "wip_future": 8,  "utilization_avg_future": 0.71, "y_bottleneck": 1 },
+        { "toolgroup": "WE_FE_84",         "q_time_min_future": 45,   "wait_ratio_future": 0.21, "wip_future": 4,  "utilization_avg_future": 0.38, "y_bottleneck": 0 }
+      ]
+    },
+    "line_stop_expected_min": 180,
+    "risk_level": "HIGH"
+  },
+
+  "cause_analysis": [
+    {
+      "rank": 1,
+      "cause": "투입량 급증",
+      "contribution_pct": 45.2,
+      "recommended_action": "투입 스케줄 조정",
+      "similar_case": "2025-11-14 동일 공정 병목 발생 (해결: 투입 분산)"
+    },
+    {
+      "rank": 2,
+      "cause": "특정 호기 집중 (Diffusion_FE_120#1)",
+      "contribution_pct": 31.8,
+      "recommended_action": "REQUEUE_TOOL로 부하 분산",
+      "similar_case": "2025-09-03 집중 할당 이슈 (해결: 리큐잉)"
+    },
+    {
+      "rank": 3,
+      "cause": "PM 예정 호기 선배정",
+      "contribution_pct": 22.9,
+      "recommended_action": "PM 일정 확인 후 재배정",
+      "similar_case": "없음"
+    }
+  ],
+
+  "shap_analysis": {
+    "model": "XGBoost",
+    "snapshot_time": 230820,
+    "toolgroup": "Diffusion_FE_120",
+    "proba": 0.847,
+    "top_features": [
+      { "feature": "max_util",              "axis": "가동", "label_ko": "설비 최대 가동률(hot-spot)", "value": 1.000, "shap": 1.149, "share_abs_pct": 28.4, "direction": "병목 쪽으로 기여(+)" },
+      { "feature": "q_time_min_delta_120",  "axis": "혼잡", "label_ko": "대기시간 2h 변화",          "value": 0.773, "shap": 1.066, "share_abs_pct": 26.3, "direction": "병목 쪽으로 기여(+)" },
+      { "feature": "wait_ratio_delta_120",  "axis": "혼잡", "label_ko": "대기비율 2h 변화",          "value": 0.500, "shap": 0.547, "share_abs_pct": 13.5, "direction": "병목 쪽으로 기여(+)" }
+    ]
+  },
+
+  "feature_trend": [
+    { "time_label": "T-240분", "q_time_min": 7029, "wait_ratio": 0.71, "wip": 14, "max_util": 1.00 },
+    { "time_label": "T-180분", "q_time_min": 7089, "wait_ratio": 0.74, "wip": 15, "max_util": 0.97 },
+    { "time_label": "T-120분", "q_time_min": 7149, "wait_ratio": 0.77, "wip": 16, "max_util": 0.96 },
+    { "time_label": "T-60분",  "q_time_min": 7209, "wait_ratio": 0.81, "wip": 17, "max_util": 0.96 },
+    { "time_label": "T-0분",   "q_time_min": 7269, "wait_ratio": 0.84, "wip": 18, "max_util": 0.96 }
+  ],
+
+  "action_effects": [
+    {
+      "label": "A",
+      "action_kind": "REQUEUE_TOOL",
+      "description": "Lot_Product_4_2를 Diffusion_FE_120#1 → #3으로 이동",
+      "simulation_confidence": 0.91,
+      "hard_constraints": {
+        "wip_limit_ok": true,
+        "qtime_condition_ok": true,
+        "result": "통과"
+      },
+      "kpi_delta": {
+        "avg_queue_time_min": -45.0,
+        "wip_count": -3,
+        "throughput_delta": 2
+      }
+    },
+    {
+      "label": "B",
+      "action_kind": "LOT_HOLD",
+      "description": "Lot_Product_4_2 일시 보류",
+      "simulation_confidence": 0.85,
+      "hard_constraints": {
+        "wip_limit_ok": true,
+        "qtime_condition_ok": false,
+        "result": "Q-time 초과 위험"
+      },
+      "kpi_delta": {
+        "avg_queue_time_min": -10.0,
+        "wip_count": -1,
+        "throughput_delta": -1
+      }
+    },
+    {
+      "label": "C",
+      "action_kind": "DISPATCH_RULE_OVERRIDE",
+      "description": "superhotlot setupavoidance 규칙 적용",
+      "simulation_confidence": 0.78,
+      "hard_constraints": {
+        "wip_limit_ok": true,
+        "qtime_condition_ok": true,
+        "result": "통과"
+      },
+      "kpi_delta": {
+        "avg_queue_time_min": -22.0,
+        "wip_count": -2,
+        "throughput_delta": 1
+      }
+    }
+  ],
+
+  "recommendation": {
+    "action_label": "A",
+    "action_kind": "REQUEUE_TOOL",
+    "reason": "가장 큰 대기시간 감소 효과 (-45분), 처리량 증가"
+  },
+
+  "approval_info": {
+    "status": "승인",
+    "approved_by": "김현수",
+    "approved_role": "공정 관리자",
+    "approved_at": "2026-06-02 09:30",
+    "comment": "즉시 적용 승인",
+    "rejection_reason": null
+  }
+}
