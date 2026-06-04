@@ -1,0 +1,71 @@
+{
+  "process_name": "Diffusion_FE_120",
+  "severity": "HIGH",
+  "snapshot_time": 620.0,
+  "action_effects": [
+    {
+      "label": "A ✅ AI추천",
+      "action_kind": "REQUEUE_TOOL",
+      "description": "Lot_Product_4_2를 Diffusion_FE_120#1 → #3으로 이동",
+      "simulation_confidence": 0.91,
+      "hard_constraints": {
+        "wip_limit_ok": true,
+        "qtime_condition_ok": true,
+        "result": "통과"
+      },
+      "kpi_delta": {
+        "avg_queue_time_min": -45.0,
+        "wip_count": -3,
+        "throughput_delta": 2,
+        "cqt_violation_delta": -2
+      }
+    },
+    {
+      "label": "B",
+      "action_kind": "LOT_HOLD",
+      "description": "Lot_Product_4_2 일시 보류",
+      "simulation_confidence": 0.85,
+      "hard_constraints": {
+        "wip_limit_ok": true,
+        "qtime_condition_ok": false,
+        "result": "Q-time 처리 조건 미달"
+      },
+      "kpi_delta": {
+        "avg_queue_time_min": -10.0,
+        "wip_count": -1,
+        "throughput_delta": -1,
+        "cqt_violation_delta": 1
+      }
+    },
+    {
+      "label": "C",
+      "action_kind": "DISPATCH_RULE_OVERRIDE",
+      "description": "SuperHotLot setup avoidance 규칙 적용 + Lot_Product_3_14 super_hot 지정",
+      "simulation_confidence": 0.78,
+      "hard_constraints": {
+        "wip_limit_ok": true,
+        "qtime_condition_ok": true,
+        "result": "통과"
+      },
+      "kpi_delta": {
+        "avg_queue_time_min": -22.0,
+        "wip_count": -2,
+        "throughput_delta": 1,
+        "cqt_violation_delta": -1
+      }
+    }
+  ],
+  "recommendation": {
+    "action_label": "A",
+    "action_kind": "REQUEUE_TOOL",
+    "reason": "대응안 A (REQUEUE_TOOL)는 avg_queue_time을 45.0분 단축시키고 WIP를 3 감소시키며, throughput을 2 증가시키는 효과가 있어 공정 개선에 가장 적합함. 반면, 대응안 B (LOT_HOLD)는 실행이 불가능하고, 대응안 C (DISPATCH_RULE_OVERRIDE)는 신뢰도가 낮아 최적의 결과를 보장하지 못함. 따라서 A가 가장 신뢰할 수 있는 선택임."
+  },
+  "approval_info": {
+    "status": "반려",
+    "approved_by": null,
+    "approved_role": null,
+    "approved_at": "2026-06-04 16:07",
+    "comment": null,
+    "rejection_reason": "내용이 별로야"
+  }
+}

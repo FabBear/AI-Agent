@@ -1,0 +1,216 @@
+{
+  "_data_sources": {
+    "real": "mes_wip_snapshot.csv, mes_tool_snapshot.csv, mes_whatif_action.csv, mes_scenario.meta.json",
+    "mock": "avg_queue_time_min, cr, kpi_delta, simulation_confidence, load_ratio, risk_score"
+  },
+
+  "process_name": "Diffusion_FE_120",
+  "severity": "HIGH",
+  "snapshot_time": 620.0,
+  "t0": 620.0,
+  "horizon_min": 120,
+
+  "bottleneck_info": {
+    "tool_group": "Diffusion_FE_120",
+    "wip_count": 39,
+    "total_tool_count": 4,
+    "available_tool_count": 4,
+    "avg_queue_time_min": 187,
+    "load_ratio": 1.06,
+    "risk_score": 49.8,
+    "capacity_wph": 10,
+    "cqt_violation_count": 3
+  },
+
+  "tool_status": [
+    { "tool_id": "Diffusion_FE_120#1",  "state": "IDLE", "wip": 0 },
+    { "tool_id": "Diffusion_FE_120#2",  "state": "RUN",  "wip": 1 },
+    { "tool_id": "Diffusion_FE_120#10", "state": "RUN",  "wip": 1 },
+    { "tool_id": "Diffusion_FE_120#11", "state": "RUN",  "wip": 1 }
+  ],
+
+  "affected_lots_detail": [
+    {
+      "lot_id": "Lot_Product_4_2",
+      "product": "Product_4",
+      "priority": 20,
+      "is_super_hot": false,
+      "status": "QUEUING",
+      "queue_tool": "Diffusion_FE_120#1",
+      "queue_position": 1,
+      "due_date_sim": 28701,
+      "rem_steps": 343,
+      "queue_time_min": 187,
+      "cr": 0.71
+    },
+    {
+      "lot_id": "Lot_Product_4_3",
+      "product": "Product_4",
+      "priority": 20,
+      "is_super_hot": false,
+      "status": "QUEUING",
+      "queue_tool": "Diffusion_FE_120#1",
+      "queue_position": 2,
+      "due_date_sim": 42641,
+      "rem_steps": 343,
+      "queue_time_min": 162,
+      "cr": 0.79
+    },
+    {
+      "lot_id": "Lot_Product_3_14",
+      "product": "Product_3",
+      "priority": 30,
+      "is_super_hot": true,
+      "status": "QUEUING",
+      "queue_tool": "Diffusion_FE_120#1",
+      "queue_position": 3,
+      "due_date_sim": 74935,
+      "rem_steps": 583,
+      "queue_time_min": 98,
+      "cr": 0.94
+    },
+    {
+      "lot_id": "Lot_Product_3_13",
+      "product": "Product_3",
+      "priority": 30,
+      "is_super_hot": true,
+      "status": "QUEUING",
+      "queue_tool": "Diffusion_FE_120#1",
+      "queue_position": 4,
+      "due_date_sim": 74935,
+      "rem_steps": 583,
+      "queue_time_min": 74,
+      "cr": 0.96
+    },
+    {
+      "lot_id": "Lot_Product_4_4",
+      "product": "Product_4",
+      "priority": 20,
+      "is_super_hot": false,
+      "status": "QUEUING",
+      "queue_tool": "Diffusion_FE_120#1",
+      "queue_position": 5,
+      "due_date_sim": 42641,
+      "rem_steps": 343,
+      "queue_time_min": 55,
+      "cr": 1.03
+    }
+  ],
+
+  "action_candidates": [
+    {
+      "label": "A",
+      "action_kind": "REQUEUE_TOOL",
+      "description": "Lot_Product_4_2를 Diffusion_FE_120#1 → #3으로 이동",
+      "scenario_id": "WHATIF_REQUEUE_T620",
+      "baseline_scenario_id": "FWD_CSV_f5178_T620",
+      "t0": 620.0,
+      "horizon_min": 600.0,
+      "action_rows": [
+        {
+          "action_kind": "REQUEUE_TOOL",
+          "lot_id": "Lot_Product_4_2",
+          "tool_group": "Diffusion_FE_120",
+          "from_tool_id": "Diffusion_FE_120#1",
+          "to_tool_id": "Diffusion_FE_120#3",
+          "step_seq": 1
+        }
+      ],
+      "simulation_confidence": 0.91,
+      "kpi_delta": {
+        "avg_queue_time_min": -45.0,
+        "wip_count": -3,
+        "throughput_delta": 2,
+        "cqt_violation_delta": -2
+      },
+      "baseline_metrics": {
+        "avg_queue_time_min": 187,
+        "wip_count": 39,
+        "throughput_24h": 8
+      },
+      "whatif_metrics": {
+        "avg_queue_time_min": 142,
+        "wip_count": 36,
+        "throughput_24h": 10
+      }
+    },
+    {
+      "label": "B",
+      "action_kind": "LOT_HOLD",
+      "description": "Lot_Product_4_2 일시 보류",
+      "scenario_id": "WHATIF_1ACTION_T620",
+      "baseline_scenario_id": "FWD_CSV_f5178_T620",
+      "t0": 620.0,
+      "horizon_min": 60.0,
+      "action_rows": [
+        {
+          "action_kind": "LOT_HOLD",
+          "lot_id": "Lot_Product_4_2",
+          "tool_group": null,
+          "from_tool_id": null,
+          "to_tool_id": null,
+          "step_seq": null
+        }
+      ],
+      "simulation_confidence": 0.85,
+      "kpi_delta": {
+        "avg_queue_time_min": -10.0,
+        "wip_count": -1,
+        "throughput_delta": -1,
+        "cqt_violation_delta": 1
+      },
+      "baseline_metrics": {
+        "avg_queue_time_min": 187,
+        "wip_count": 39,
+        "throughput_24h": 8
+      },
+      "whatif_metrics": {
+        "avg_queue_time_min": 177,
+        "wip_count": 38,
+        "throughput_24h": 7
+      }
+    },
+    {
+      "label": "C",
+      "action_kind": "DISPATCH_RULE_OVERRIDE",
+      "description": "SuperHotLot setup avoidance 규칙 적용 + Lot_Product_3_14 super_hot 지정",
+      "scenario_id": "WHATIF_SUPERHOT_T620",
+      "baseline_scenario_id": "FWD_CSV_f5178_T620",
+      "t0": 620.0,
+      "horizon_min": 60.0,
+      "action_rows": [
+        {
+          "action_kind": "DISPATCH_RULE_OVERRIDE",
+          "lot_id": null,
+          "tool_group": "Diffusion_FE_120",
+          "from_tool_id": null,
+          "to_tool_id": null,
+          "dispatch_rule": "superhotlot setupavoidance"
+        },
+        {
+          "action_kind": "SET_SUPER_HOT",
+          "lot_id": "Lot_Product_3_14",
+          "tool_group": null,
+          "super_hot": true
+        }
+      ],
+      "simulation_confidence": 0.78,
+      "kpi_delta": {
+        "avg_queue_time_min": -22.0,
+        "wip_count": -2,
+        "throughput_delta": 1,
+        "cqt_violation_delta": -1
+      },
+      "baseline_metrics": {
+        "avg_queue_time_min": 187,
+        "wip_count": 39,
+        "throughput_24h": 8
+      },
+      "whatif_metrics": {
+        "avg_queue_time_min": 165,
+        "wip_count": 37,
+        "throughput_24h": 9
+      }
+    }
+  ]
+}
