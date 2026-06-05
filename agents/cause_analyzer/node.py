@@ -48,6 +48,8 @@ def analyze_cause(
         except Exception as e:
             _log.warning(f"[Forward Sim 스킵] {type(e).__name__}: {e}")
 
+    prev_kpi_list = state["prev_kpi_snapshot"] or None
+
     reports: list[CauseReport] = []
     for alert in alerts:
         tg = alert.toolgroup
@@ -55,7 +57,7 @@ def analyze_cause(
         if kpi is None:
             continue
 
-        shap_top = get_shap_top(kpi, top_n=4)
+        shap_top = get_shap_top(kpi, top_n=4, prev_kpi_list=prev_kpi_list)
         trend_top = get_trend_top(window, tg, top_n=3)
         upstream_suspects = find_upstream_suspects(G, tg, kpi_map)
 

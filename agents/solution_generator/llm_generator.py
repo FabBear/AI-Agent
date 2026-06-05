@@ -25,7 +25,7 @@ _MAX_TOKENS = 800
 def _build_prompt(
     alert: BottleneckAlert,
     cause_report: CauseReport,
-    candidates: list[SolutionCandidate],
+    candidate: SolutionCandidate,
 ) -> str:
     cause_summary = cause_report.cause_summary
     forecast_text = ""
@@ -37,28 +37,22 @@ def _build_prompt(
         if wr:
             forecast_text += f", wait_ratio {wr.now}→{wr.future} ({wr.pct_change:+.1f}%)"
 
-    cand_text = "\n".join(
-        f"[대응안 {c.rank}] {c.name}\n"
-        f"  파라미터: {c.params.model_dump(exclude_none=True)}\n"
-        f"  기대 효과: {c.expected_effect}\n"
-        f"  근거: {c.rationale}"
-        for c in candidates
-    )
-
     return f"""당신은 반도체 FAB 운영 전문가입니다. 반드시 한국어로만 답변하세요.
 
 병목 공정: {alert.toolgroup}  심각도: {alert.severity.value}  확률: {alert.probability:.1%}
 원인 요약: {cause_summary}
 {f"시뮬 예측: {forecast_text}" if forecast_text else ""}
 
-아래 대응안 후보들을 검토하고, 각 대응안에 대해:
+아래 대응안에 대해:
 1. 구체적인 실행 방법 (어떤 파라미터를 얼마나 바꿀 것인가)
 2. 예상 효과와 주의사항
-을 1~2문장으로 정리해주세요.
+을 2~3문장으로 정리해주세요.
 
-{cand_text}
+[대응안] {candidate.name}
+  파라미터: {candidate.params.model_dump(exclude_none=True)}
+  근거: {candidate.rationale}
 
-각 대응안 번호를 유지하며 답변:"""
+답변:"""
 
 
 def refine_candidates(
@@ -77,7 +71,7 @@ def refine_candidates(
         from openai import OpenAI, RateLimitError, APIError
 
         client = OpenAI(api_key=api_key)
-        prompt = _build_prompt(alert, cause_report, candidates)
+        prompt = _build_prompt(alert, cause_report, candidates[0])
 
         @retry(
             retry=retry_if_exception_type((RateLimitError, APIError)),
@@ -103,7 +97,6 @@ def refine_candidates(
             _log.warning("[llm_generator] 빈 응답 수신 — 규칙 기반 유지")
             return candidates
 
-        # LLM 전체 응답을 첫 번째 대응안의 expected_effect에 통합
         enriched = candidates[0].model_copy(update={"expected_effect": llm_text})
         return [enriched] + candidates[1:]
 
