@@ -4,13 +4,18 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from agents.logger import get_logger
 from agents.schemas.cause import SHAPFeature, SimForecast, TrendInsight
+from agents.token_tracker import record as _record_tokens
+
+_log = get_logger(__name__)
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
-_HF_MODEL = "Qwen/Qwen2.5-7B-Instruct"
-_HF_MODEL_FALLBACK = "google/flan-t5-xxl"
+_MODEL = "gpt-4o-mini"
+_MAX_TOKENS = 800
 
 
 def _build_prompt(
@@ -64,35 +69,49 @@ def summarize(
     upstream_suspects: list[str],
     sim_forecast: SimForecast | None = None,
 ) -> str:
-    """HuggingFace LLM 호출. 실패 시 규칙 기반으로 폴백."""
-    hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN", "")
-    if hf_token and not hf_token.startswith("your_"):
-        return _call_hf(toolgroup, shap_top, trend_top, upstream_suspects, hf_token, sim_forecast)
+    """OpenAI LLM 호출. 실패 시 규칙 기반으로 폴백."""
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if api_key and not api_key.startswith("your_"):
+        return _call_openai(toolgroup, shap_top, trend_top, upstream_suspects, api_key, sim_forecast)
     return _rule_based_summary(toolgroup, shap_top, trend_top, upstream_suspects, sim_forecast)
 
 
-def _call_hf(
+def _call_openai(
     toolgroup: str,
     shap_top: list[SHAPFeature],
     trend_top: list[TrendInsight],
     upstream_suspects: list[str],
-    token: str,
+    api_key: str,
     sim_forecast: SimForecast | None = None,
 ) -> str:
     prompt = _build_prompt(toolgroup, shap_top, trend_top, upstream_suspects, sim_forecast)
     try:
-        from huggingface_hub import InferenceClient
+        from openai import OpenAI, RateLimitError, APIError
 
-        client = InferenceClient(token=token)
-        response = client.chat_completion(
-            model=_HF_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
-            temperature=0.2,
+        @retry(
+            retry=retry_if_exception_type((RateLimitError, APIError)),
+            wait=wait_exponential(multiplier=1, min=2, max=30),
+            stop=stop_after_attempt(3),
+            reraise=True,
         )
-        return response.choices[0].message.content.strip()
+        def _call():
+            return OpenAI(api_key=api_key).chat.completions.create(
+                model=_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=_MAX_TOKENS,
+                temperature=0.2,
+            )
+
+        response = _call()
+        usage = response.usage
+        _record_tokens("llm_summarizer", usage.prompt_tokens, usage.completion_tokens)
+        result = response.choices[0].message.content.strip()
+        if not result:
+            _log.warning("[llm_summarizer] 빈 응답 수신 — 규칙 기반으로 대체")
+            return _rule_based_summary(toolgroup, shap_top, trend_top, upstream_suspects, sim_forecast)
+        return result
     except Exception as e:
-        print(f"  [HF 폴백] {type(e).__name__} — 규칙 기반으로 대체")
+        _log.warning(f"[llm_summarizer] {type(e).__name__} — 규칙 기반으로 대체")
         return _rule_based_summary(toolgroup, shap_top, trend_top, upstream_suspects, sim_forecast)
 
 

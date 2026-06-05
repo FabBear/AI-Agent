@@ -8,30 +8,16 @@ from agents.cause_analyzer.shap_analyzer import get_shap_top
 from agents.cause_analyzer.trend_analyzer import get_trend_top
 from agents.cause_analyzer.upstream_tracker import find_upstream_suspects
 from agents.data.kpi_loader import load_kpi_window
+from agents.logger import get_logger
 from agents.schemas.cause import CauseReport, KpiComparison, SimForecast
 from agents.state import PipelineState
+
+_log = get_logger(__name__)
 
 _DEFAULT_CSV = (
     Path(__file__).parent.parent.parent.parent / "Simulation" / "simulation" / "sample_csv"
 )
 
-
-def _run_forward_sim(snapshot_time: float) -> SimForecast | None:
-    """Forward 시뮬 실행 → SimForecast 반환. 실패 시 None."""
-    try:
-        from agents.sim_runner.trigger import run_forward
-        from agents.sim_runner.forecaster import load_forward_kpis
-
-        csv_dir = run_forward(t0=snapshot_time, horizon_min=120.0)
-        forward_kpis = load_forward_kpis(csv_dir)
-        if not forward_kpis:
-            return None
-
-        # 대표 TG 하나로 전체 FAB 수준 비교 (Critical TG 기준)
-        return None  # 이 함수는 TG별로 호출되므로 caller가 처리
-    except Exception as e:
-        print(f"  [Forward Sim 실패] {type(e).__name__}: {e}")
-        return None
 
 
 def analyze_cause(
@@ -55,12 +41,12 @@ def analyze_cause(
             from agents.sim_runner.trigger import run_forward
             from agents.sim_runner.forecaster import load_forward_kpis
 
-            print("\n  [Forward Sim] 2시간 후 예측 시뮬레이션 실행 중...")
+            _log.info("[Forward Sim] 2시간 후 예측 시뮬레이션 실행 중...")
             fwd_csv_dir = run_forward(t0=snapshot_time, horizon_min=120.0)
             forward_kpis = load_forward_kpis(fwd_csv_dir)
-            print(f"  [Forward Sim] 완료 — {len(forward_kpis)}개 TG 결과")
+            _log.info(f"[Forward Sim] 완료 — {len(forward_kpis)}개 TG 결과")
         except Exception as e:
-            print(f"  [Forward Sim 스킵] {type(e).__name__}: {e}")
+            _log.warning(f"[Forward Sim 스킵] {type(e).__name__}: {e}")
 
     reports: list[CauseReport] = []
     for alert in alerts:
