@@ -7,6 +7,7 @@ from agents.schemas.kpi import ToolGroupKPI
 
 class PipelineState(TypedDict):
     kpi_snapshot: list[ToolGroupKPI]
+    prev_kpi_snapshot: list[ToolGroupKPI]  # t-120분 스냅샷 (delta 피처용)
     potential_bottlenecks: list[PotentialBottleneck]
     alerts: list[BottleneckAlert]
     cause_reports: list[CauseReport]

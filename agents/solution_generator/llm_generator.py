@@ -6,14 +6,20 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from agents.logger import get_logger
 from agents.schemas.alert import BottleneckAlert
 from agents.schemas.cause import CauseReport
 from agents.schemas.solution import SolutionCandidate
+from agents.token_tracker import record as _record_tokens
+
+_log = get_logger(__name__)
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
-_HF_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+_MODEL = "gpt-4o-mini"
+_MAX_TOKENS = 800
 
 
 def _build_prompt(
@@ -63,28 +69,42 @@ def refine_candidates(
     """LLM으로 대응안 설명 보강. 실패 시 원본 반환."""
     if not candidates:
         return candidates
-    hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN", "")
-    if not hf_token or hf_token.startswith("your_"):
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key or api_key.startswith("your_"):
         return candidates
 
     try:
-        from huggingface_hub import InferenceClient
+        from openai import OpenAI, RateLimitError, APIError
 
         prompt = _build_prompt(alert, cause_report, candidates)
-        client = InferenceClient(token=hf_token)
-        response = client.chat_completion(
-            model=_HF_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=400,
-            temperature=0.2,
+
+        @retry(
+            retry=retry_if_exception_type((RateLimitError, APIError)),
+            wait=wait_exponential(multiplier=1, min=2, max=30),
+            stop=stop_after_attempt(3),
+            reraise=True,
         )
+        def _call():
+            return OpenAI(api_key=api_key).chat.completions.create(
+                model=_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=_MAX_TOKENS,
+                temperature=0.2,
+            )
+
+        response = _call()
+        usage = response.usage
+        _record_tokens("llm_generator", usage.prompt_tokens, usage.completion_tokens)
         llm_text = response.choices[0].message.content.strip()
 
+        if not llm_text:
+            _log.warning("[llm_generator] 빈 응답 수신 — 규칙 기반 유지")
+            return candidates
+
         # LLM 전체 응답을 첫 번째 대응안의 expected_effect에 통합
-        # (구조화 파싱보다 전체 설명으로 제공하는 게 실용적)
         enriched = candidates[0].model_copy(update={"expected_effect": llm_text})
         return [enriched] + candidates[1:]
 
     except Exception as e:
-        print(f"  [Solution LLM 폴백] {type(e).__name__} — 규칙 기반 유지")
+        _log.warning(f"[llm_generator] {type(e).__name__} — 규칙 기반 유지")
         return candidates
