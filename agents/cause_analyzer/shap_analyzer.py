@@ -41,6 +41,6 @@ def get_shap_top(kpi: ToolGroupKPI, top_n: int = 5) -> list[SHAPFeature]:
             shap_value=round(float(sv), 4),
             kpi_value=round(float(kv), 4),
         )
-        for feat, sv, kv in pairs[:top_n]
-        if feat != "toolgroup_enc"  # 인코딩 값은 해석 불필요
+        for feat, sv, kv in pairs
+        if feat != "toolgroup_enc"
     ][:top_n]

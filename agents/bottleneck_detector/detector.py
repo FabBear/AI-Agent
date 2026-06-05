@@ -20,12 +20,15 @@ def _load_model() -> xgb.Booster:
     return _booster
 
 
-def detect(kpi_list: list[ToolGroupKPI]) -> list[PotentialBottleneck]:
+def detect(
+    kpi_list: list[ToolGroupKPI],
+    prev_kpi_list: list[ToolGroupKPI] | None = None,
+) -> list[PotentialBottleneck]:
     """XGBoost로 병목 확률을 계산하고 0.5 초과 TG를 반환한다."""
     if not kpi_list:
         return []
     booster = _load_model()
-    features = build_feature_matrix(kpi_list)
+    features = build_feature_matrix(kpi_list, prev_kpi_list=prev_kpi_list)
     probabilities = booster.predict(xgb.DMatrix(features))
 
     return [

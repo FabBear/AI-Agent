@@ -10,12 +10,17 @@
     "utilization_avg",
     "max_avg_q_time",
     "max_util",
+    "q_time_min_delta_120",
+    "wait_ratio_delta_120",
+    "wip_delta_120",
+    "max_util_delta_120",
+    "utilization_avg_delta_120",
     "toolgroup_enc"
   ],
   "lookahead_min": 120.0,
   "metrics": {
-    "roc_auc": 0.9722,
-    "pos_rate_pct": 7.55
+    "roc_auc": 0.972,
+    "pos_rate_pct": 7.71
   },
   "csv_dir": "/Users/hyeonseo/Desktop/semiconductor/Simulation/simulation/sample_csv"
 }
