@@ -48,7 +48,7 @@ def analyze_cause(
         except Exception as e:
             _log.warning(f"[Forward Sim 스킵] {type(e).__name__}: {e}")
 
-    prev_kpi_list = state.get("prev_kpi_snapshot") or None
+    prev_kpi_list = state["prev_kpi_snapshot"] or None
 
     reports: list[CauseReport] = []
     for alert in alerts:
