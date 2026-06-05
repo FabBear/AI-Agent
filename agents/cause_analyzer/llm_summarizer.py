@@ -88,6 +88,8 @@ def _call_openai(
     try:
         from openai import OpenAI, RateLimitError, APIError
 
+        client = OpenAI(api_key=api_key)
+
         @retry(
             retry=retry_if_exception_type((RateLimitError, APIError)),
             wait=wait_exponential(multiplier=1, min=2, max=30),
@@ -95,7 +97,7 @@ def _call_openai(
             reraise=True,
         )
         def _call():
-            return OpenAI(api_key=api_key).chat.completions.create(
+            return client.chat.completions.create(
                 model=_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=_MAX_TOKENS,
@@ -104,7 +106,8 @@ def _call_openai(
 
         response = _call()
         usage = response.usage
-        _record_tokens("llm_summarizer", usage.prompt_tokens, usage.completion_tokens)
+        if usage:
+            _record_tokens("llm_summarizer", usage.prompt_tokens, usage.completion_tokens)
         result = response.choices[0].message.content.strip()
         if not result:
             _log.warning("[llm_summarizer] 빈 응답 수신 — 규칙 기반으로 대체")

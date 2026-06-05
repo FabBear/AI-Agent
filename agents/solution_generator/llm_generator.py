@@ -76,6 +76,7 @@ def refine_candidates(
     try:
         from openai import OpenAI, RateLimitError, APIError
 
+        client = OpenAI(api_key=api_key)
         prompt = _build_prompt(alert, cause_report, candidates)
 
         @retry(
@@ -85,7 +86,7 @@ def refine_candidates(
             reraise=True,
         )
         def _call():
-            return OpenAI(api_key=api_key).chat.completions.create(
+            return client.chat.completions.create(
                 model=_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=_MAX_TOKENS,
@@ -94,7 +95,8 @@ def refine_candidates(
 
         response = _call()
         usage = response.usage
-        _record_tokens("llm_generator", usage.prompt_tokens, usage.completion_tokens)
+        if usage:
+            _record_tokens("llm_generator", usage.prompt_tokens, usage.completion_tokens)
         llm_text = response.choices[0].message.content.strip()
 
         if not llm_text:

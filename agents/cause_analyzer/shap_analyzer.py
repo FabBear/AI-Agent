@@ -23,10 +23,14 @@ def _load_explainer() -> shap.TreeExplainer:
     return _explainer
 
 
-def get_shap_top(kpi: ToolGroupKPI, top_n: int = 5) -> list[SHAPFeature]:
+def get_shap_top(
+    kpi: ToolGroupKPI,
+    top_n: int = 5,
+    prev_kpi_list: list[ToolGroupKPI] | None = None,
+) -> list[SHAPFeature]:
     """해당 TG에 대한 SHAP 상위 피처를 반환한다."""
     explainer = _load_explainer()
-    feature_df = build_feature_matrix([kpi])
+    feature_df = build_feature_matrix([kpi], prev_kpi_list=prev_kpi_list)
     shap_vals = explainer.shap_values(feature_df)[0]  # (n_features,)
 
     pairs = sorted(
@@ -41,6 +45,6 @@ def get_shap_top(kpi: ToolGroupKPI, top_n: int = 5) -> list[SHAPFeature]:
             shap_value=round(float(sv), 4),
             kpi_value=round(float(kv), 4),
         )
-        for feat, sv, kv in pairs[:top_n]
-        if feat != "toolgroup_enc"  # 인코딩 값은 해석 불필요
+        for feat, sv, kv in pairs
+        if feat != "toolgroup_enc"
     ][:top_n]
