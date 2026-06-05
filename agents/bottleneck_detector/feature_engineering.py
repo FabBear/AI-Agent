@@ -51,13 +51,11 @@ def build_feature_matrix(
 
     if needs_delta:
         if prev_kpi_list:
-            prev_map = {kpi.toolgroup: kpi for kpi in prev_kpi_list}
+            prev_df = pd.DataFrame([kpi.model_dump() for kpi in prev_kpi_list]).set_index("toolgroup")
             for col in _DELTA_COLS:
                 delta_col = f"{col}_delta_120"
-                if delta_col in feature_cols:
-                    prev_vals = df["toolgroup"].map(
-                        {tg: getattr(kpi, col, 0.0) for tg, kpi in prev_map.items()}
-                    ).fillna(0.0)
+                if delta_col in feature_cols and col in prev_df.columns:
+                    prev_vals = df["toolgroup"].map(prev_df[col]).fillna(0.0)
                     df[delta_col] = df[col] - prev_vals
         else:
             for col in _DELTA_COLS:

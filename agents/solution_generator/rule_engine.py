@@ -140,9 +140,11 @@ def generate_candidates(
                 f"{dispatch_effect[dispatch]}"
             ),
             confidence=round(max(_confidence(cause_report, "dispatch_change") - 0.05, 0.0), 2),
-            rationale=f"장비 처리 효율 개선 목적 — 현재 max_util={cause_report.shap_top[1].kpi_value:.3f}"
-            if len(cause_report.shap_top) > 1
-            else "장비 처리 효율 개선 목적",
+            rationale=(
+                f"장비 처리 효율 개선 목적 — 현재 max_util={next((f.kpi_value for f in cause_report.shap_top if f.feature == 'max_util'), 0.0):.3f}"
+                if any(f.feature == "max_util" for f in cause_report.shap_top)
+                else "장비 처리 효율 개선 목적"
+            ),
         )
     )
 

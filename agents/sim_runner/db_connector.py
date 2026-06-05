@@ -28,7 +28,7 @@ def get_session():
 
 
 def query_df(sql: str, params: dict | None = None):
-    """Run raw SQL and return list[dict]."""
+    """Run raw SQL and return pd.DataFrame."""
     import pandas as pd
 
     with get_session() as session:
