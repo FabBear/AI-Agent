@@ -46,7 +46,7 @@ def compute_paired_stats(deltas: list[float]) -> dict:
         }
 
     mean_d = sum(deltas) / n
-    se = (sum((x - mean_d) ** 2 for x in deltas) / max(n - 1, 1)) ** 0.5
+    std_dev = (sum((x - mean_d) ** 2 for x in deltas) / max(n - 1, 1)) ** 0.5
 
     p_val: float | None = None
     ci_lo, ci_hi = mean_d, mean_d
@@ -54,9 +54,9 @@ def compute_paired_stats(deltas: list[float]) -> dict:
     if _HAS_SCIPY and n >= 2:
         res = ttest_1samp(deltas, popmean=0.0)
         p_val = float(res.pvalue)
-        if se > 0:
+        if std_dev > 0:
             tcrit = float(student_t.ppf(0.975, n - 1))
-            margin = tcrit * se / (n ** 0.5)
+            margin = tcrit * std_dev / (n ** 0.5)
             ci_lo = mean_d - margin
             ci_hi = mean_d + margin
 
