@@ -19,10 +19,11 @@ REPORTS_DIR = _ROOT / "report_agent_out"
 
 # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────────
 
-def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report) -> dict:
+def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, kpi_map: dict | None = None, detected_at: str = "") -> dict:
     """compare_result + PipelineState 데이터 → report_draft 초기 항목."""
     tg = compare_result["toolgroup"]
-    detected_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    if not detected_at:
+        detected_at = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     bottleneck_info: dict = {
         "tool_group": tg,
@@ -59,12 +60,42 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report) 
     ]
 
     affected_tgs = alert.impact.affected_tgs or []
+
+    affected_processes = []
+    for t in affected_tgs:
+        tg_kpi = (kpi_map or {}).get(t)
+        proc: dict = {"process": t, "status": "영향"}
+        if tg_kpi:
+            proc["utilization_pct"] = round(float(tg_kpi.utilization_avg) * 100, 1)
+            proc["wait_ratio"] = round(float(tg_kpi.wait_ratio), 2)
+            proc["wip"] = int(tg_kpi.wip)
+        affected_processes.append(proc)
+
+    sim_forecast = cause_report.sim_forecast if cause_report else None
+    if sim_forecast:
+        kd = sim_forecast.kpi_delta
+        horizon_min = int(sim_forecast.t_future - sim_forecast.t0)
+        forward_sim: dict = {
+            "horizon_min": horizon_min,
+            "results": [
+                {
+                    "toolgroup": tg,
+                    "q_time_future": round(float(kd["q_time_min"].future), 1) if "q_time_min" in kd else None,
+                    "wait_ratio_future": round(float(kd["wait_ratio"].future), 3) if "wait_ratio" in kd else None,
+                    "wip_future": int(kd["wip"].future) if "wip" in kd else None,
+                    "y_bottleneck": 1 if sim_forecast.gets_worse else 0,
+                }
+            ],
+        }
+    else:
+        forward_sim = {}
+
     diffusion_analysis = {
         "is_bottleneck": True,
         "bottleneck_location": tg,
-        "diffusion_path": [f"{tg} → {t}" for t in affected_tgs[:3]],
-        "affected_processes": [{"process": t, "status": "영향"} for t in affected_tgs],
-        "forward_simulation": {},
+        "diffusion_path": [tg] + affected_tgs[:3],
+        "affected_processes": affected_processes,
+        "forward_simulation": forward_sim,
         "line_stop_expected_min": int(alert.impact.ct_increase_min),
         "risk_level": alert.severity.value,
     }
@@ -174,6 +205,7 @@ def report_prepare(state: "PipelineState") -> dict:
     cause_map = {r.toolgroup: r for r in cause_reports}
 
     report_draft: list[dict] = []
+    detected_at = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     for cr in compare_results:
         tg = cr["toolgroup"]
@@ -188,11 +220,13 @@ def report_prepare(state: "PipelineState") -> dict:
             kpi=kpi_map.get(tg),
             prev_kpi=prev_kpi_map.get(tg),
             cause_report=cause_map.get(tg),
+            kpi_map=kpi_map,
+            detected_at=detected_at,
         )
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         sev = item["severity"]
-        badge = {"HIGH": "🔴 HIGH", "MEDIUM": "🟡 MEDIUM", "LOW": "🟢 LOW", "Critical": "🚨 CRITICAL"}.get(sev, sev)
+        badge = {"Critical": "🚨 CRITICAL", "High": "🔴 HIGH", "Medium": "🟡 MEDIUM", "Low": "🟢 LOW"}.get(sev, sev)
         item["section_header"] = (
             f"# FAB 병목 대응 보고서\n\n"
             f"| 항목 | 내용 |\n"
@@ -205,12 +239,12 @@ def report_prepare(state: "PipelineState") -> dict:
         )
 
         ai = item.get("approval_info") or {}
-        detected_at = item.get("detected_at", "-")
+        item_detected_at = item["detected_at"]
         if ai.get("status") == "반려":
             item["section_approval"] = (
                 f"## 5. 승인 정보\n\n"
                 f"| 항목 | 내용 |\n|------|------|\n"
-                f"| 탐지시각 | {detected_at} |\n"
+                f"| 탐지시각 | {item_detected_at} |\n"
                 f"| 검토자 | {ai.get('approved_by', '-')} ({ai.get('approved_role', '-')}) |\n"
                 f"| 상태 | 반려 |\n"
                 f"| 반려일시 | {ai.get('approved_at', '-')} |\n"
@@ -220,7 +254,7 @@ def report_prepare(state: "PipelineState") -> dict:
             item["section_approval"] = (
                 f"## 5. 승인 정보\n\n"
                 f"| 항목 | 내용 |\n|------|------|\n"
-                f"| 탐지시각 | {detected_at} |\n"
+                f"| 탐지시각 | {item_detected_at} |\n"
                 f"| 승인자 | {ai.get('approved_by', '-')} ({ai.get('approved_role', '-')}) |\n"
                 f"| 상태 | 승인 |\n"
                 f"| 승인일시 | {ai.get('approved_at', '-')} |\n"

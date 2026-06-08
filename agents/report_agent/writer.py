@@ -161,13 +161,13 @@ def write_summary(state: ReportState) -> dict:
 |------|----|
 | 심각도 | {state['severity']} |
 | risk_score | {bi.get('risk_score', '-')} |
-| load_ratio | {bi.get('load_ratio', '-')} |
-| 생산 손실률 | {bi.get('production_loss_pct', '-')}% |
+| load_ratio (wait_ratio) | {bi.get('load_ratio', '-')} |
 | 지연 주문 수 | {bi.get('delayed_orders', '-')}건 |
 | 현재 평균 대기시간 | {bi.get('avg_queue_time_min', '-')}분 |
 | 최대 대기시간 | {bi.get('peak_q_time_min', '-')}분 |
-| CQT 위반 Lot 수 | {bi.get('cqt_violation_count', '-')}건 |
-| 가용 호기 | {bi.get('available_tool_count', '-')} / {bi.get('total_tool_count', '-')}대 |
+| WIP | {bi.get('wip_count', '-')}개 |
+| 가동률 | {bi.get('utilization_pct', '-')}% |
+| 가용 호기 비율 | {bi.get('available_tool_ratio', '-')} |
 
 ---""",
     )
@@ -197,11 +197,11 @@ FAB 전체 KPI: {json.dumps(fab, ensure_ascii=False)}
 [병목 발생 여부와 정확한 위치를 한 문장으로 서술]
 - **확산 경로**: [diffusion_path 항목을 → 화살표로 연결하여 한 줄로 표기]
 
-### ② 확산 현황 (공정별 가동률 및 Capacity 비교)
+### ② 확산 현황 (공정별 가동률 현황)
 
-| 공정 | 가동률 | Capacity(WPH) | Load(WPH) | 상태 |
-|------|--------|--------------|----------|------|
-[affected_processes 데이터를 행으로 채울 것. capacity_wph, load_wph 값 사용]
+| 공정 | 가동률(%) | wait_ratio | WIP | 상태 |
+|------|-----------|-----------|-----|------|
+[affected_processes 데이터를 행으로 채울 것. utilization_pct·wait_ratio·wip 값 사용. 값 없으면 -]
 
 ### ③ 위험도 및 전 라인 정지 예상 시간
 - **위험도**: {da.get('risk_level', '-')}
@@ -209,21 +209,20 @@ FAB 전체 KPI: {json.dumps(fab, ensure_ascii=False)}
 - [위험도에 대한 한 줄 해석]
 - **병목 추이**: [bottleneck_trend 데이터를 보고 Q-time과 WIP가 심화/완화/유지 중인지 한 문장으로 요약]
 
-### ④ FAB 전체 영향
+### ④ 병목 공정 KPI 현황
 
 | 지표 | 값 |
 |------|----|
-| 24시간 처리량 | {fab.get('throughput_24h', '-')}건 |
-| 평균 TAT | {fab.get('tat_min', '-')}분 |
-| 완료율 | {fab.get('completion_rate_pct', '-')}% |
-| RTF | {fab.get('rtf', '-')} |
 | 전체 WIP | {fab.get('wip_total', '-')}개 |
+| 평균 가동률 | {fab.get('utilization_avg_pct', '-')}% |
+| 평균 대기시간 | {fab.get('q_time_min', '-')}분 |
+| wait_ratio | {fab.get('wait_ratio', '-')} |
 
 ### ⑤ Forward Simulation ({da.get('forward_simulation', {}).get('horizon_min', 120)}분 후 예측)
 
 | Tool Group | q_time (미래) | wait_ratio (미래) | WIP (미래) | 병목 예측 |
 |------------|-------------|-----------------|----------|----------|
-[forward_simulation.results 데이터를 행으로 채울 것. y_bottleneck=1이면 ✅ 병목, 0이면 ✅ 정상]
+[forward_simulation.results 데이터를 행으로 채울 것. q_time_future·wait_ratio_future·wip_future 값 사용. y_bottleneck=1이면 ✅ 병목, 0이면 ✅ 정상. forward_simulation이 비어 있으면 "| - | - | - | - | - |" 한 행만 출력]
 
 ---""",
     )
@@ -233,7 +232,6 @@ FAB 전체 KPI: {json.dumps(fab, ensure_ascii=False)}
 def write_cause(state: ReportState) -> dict:
     """3. 원인 분석 TOP 3"""
     ca = state.get("cause_analysis") or []
-    tools = state.get("tool_status", [])
     ft = state.get("feature_trend", [])
     shap = state.get("shap_analysis", {})
     section = _llm_write(
@@ -241,7 +239,6 @@ def write_cause(state: ReportState) -> dict:
         f"""아래 데이터를 바탕으로 '원인 분석 TOP 3' 섹션을 작성하세요.
 
 원인 분석 데이터: {json.dumps(ca, ensure_ascii=False)}
-호기별 상태: {json.dumps(tools, ensure_ascii=False)}
 feature 트렌드 데이터: {json.dumps(ft, ensure_ascii=False)}
 ML SHAP 분석: {json.dumps(shap, ensure_ascii=False)}
 
@@ -257,22 +254,17 @@ ML SHAP 분석: {json.dumps(shap, ensure_ascii=False)}
 [각 원인의 similar_case를 bullet 리스트로, 없으면 "- 없음"]
 
 ### ML 모델 SHAP 분석 (Top 3 Feature)
-> 모델: {shap.get('model', '-')} | 병목 예측 확률: {shap.get('proba', '-')}
+> 모델: {shap.get('model', '-')}
 
-| 피처명 | 축 | 설명 | 현재값 | 기여도(%) | 방향 |
-|--------|-----|------|--------|----------|------|
-[shap_analysis.top_features를 행으로 채울 것. feature, axis, label_ko, value, share_abs_pct, direction 사용]
+| 피처명 | 현재값 | 기여도(%) | 방향 |
+|--------|--------|----------|------|
+[shap_analysis.top_features를 행으로 채울 것. feature·value·share_abs_pct·direction 값 사용]
 
 ### feature 트렌드 (탐지 전 4시간)
 
 | 시각 | q_time_min | wait_ratio | wip | max_util |
 |------|-----------|-----------|-----|---------|
-[feature_trend 데이터를 행으로 채울 것]
-
-### 호기 상태 요약
-- **가동 중**: [tool_status에서 state=RUN인 호기 수]대
-- **비가동 (DOWN/PM)**: [state가 DOWN인 호기 ID 목록, 없으면 "없음"]
-- **IDLE**: [state=IDLE인 호기 ID 목록, 없으면 "없음"]
+[feature_trend 데이터를 행으로 채울 것. 값 없는 feature는 -]
 
 ---""",
     )
@@ -305,15 +297,16 @@ def write_actions(state: ReportState) -> dict:
 
 ### ② 대응안 A / B / C 비교
 
-| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 처리량 변화 |
-|--------|------|------|-------------|---------|-----------|
-[각 대응안을 행으로 채울 것, ✅ 표시 없음]
+| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 처리량 변화 | 시뮬 신뢰도 |
+|--------|------|------|-------------|---------|-----------|------------|
+[각 대응안을 행으로 채울 것, ✅ 표시 없음, simulation_confidence는 % 단위로]
 
 ---""",
         )
     else:
+        action_label = rec.get("action_label", "")
         approved = next(
-            (e for e in effects if e.get("label") == rec.get("action_label")),
+            (e for e in effects if e.get("label", "").split()[0] == action_label),
             effects[0] if effects else {}
         )
         lots = state.get("affected_lots_detail", [])
@@ -337,15 +330,9 @@ def write_actions(state: ReportState) -> dict:
 
 ### ② 대응안 A / B / C 비교
 
-| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 처리량 변화 | Hard Constraint | 시뮬 신뢰도 |
-|--------|------|------|-------------|---------|-----------|----------------|------------|
-[각 대응안을 행으로, 승인된 것(label={rec.get('action_label')})에는 ✅ 표시, hard_constraints.result 값 사용, simulation_confidence는 % 단위로]
-
-### ③ 영향 Lot 현황
-
-| Lot ID | 제품 | 우선순위 | CR | 대기시간 | SuperHot |
-|--------|------|---------|-----|---------|---------|
-[affected_lots_detail을 우선순위 내림차순으로 행 채울 것, cr은 소수점 2자리, is_super_hot=true이면 ✅, CR < 1.0이면 지연 위험]
+| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 처리량 변화 | 시뮬 신뢰도 |
+|--------|------|------|-------------|---------|-----------|------------|
+[각 대응안을 행으로, 승인된 것(label={rec.get('action_label')})에는 ✅ 표시, simulation_confidence는 % 단위로]
 
 ---""",
         )
