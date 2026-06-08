@@ -72,6 +72,8 @@ compose.override.yml
 uploads/
 tmp/
 temp/
+compare_agent_out/
+report_agent_out/
 
 # ML / Model artifacts
 *.pt

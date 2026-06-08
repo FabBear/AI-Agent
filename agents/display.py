@@ -130,3 +130,21 @@ def print_solutions(solutions: list[dict]) -> None:
         if effect:
             print(f"   기대 효과: {effect[:200]}")
         print("─" * 70)
+
+
+def print_report_results(report_results: list[dict]) -> None:
+    if not report_results:
+        return
+    print("=" * 70)
+    print("  최종보고서 생성 결과")
+    print("=" * 70)
+    for r in report_results:
+        tg = r.get("toolgroup", "-")
+        md = r.get("output_path", "")
+        js = r.get("json_output_path", "")
+        print(f"\n▶ {tg}")
+        if md:
+            print(f"  📄 Markdown: {md}")
+        if js:
+            print(f"  📋 JSON:     {js}")
+    print("─" * 70)

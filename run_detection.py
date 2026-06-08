@@ -5,16 +5,18 @@
     uv run python run_detection.py
     uv run python run_detection.py --snapshot 3000
     uv run python run_detection.py --cause-only DefMEt_FE_118
+    uv run python run_detection.py --auto-approve
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import agents.token_tracker as token_tracker
 from agents.data.kpi_loader import load_kpi_snapshot, load_kpi_window
-from agents.display import print_alert_table, print_cause_reports, print_solutions
+from agents.display import print_alert_table, print_cause_reports, print_solutions, print_report_results
 from agents.pipeline import build_pipeline
 from agents.state import PipelineState
 
@@ -26,7 +28,12 @@ def main() -> None:
     parser.add_argument("--csv-dir", type=Path, default=_DEFAULT_CSV)
     parser.add_argument("--snapshot", type=float, default=None)
     parser.add_argument("--cause-only", type=str, default=None)
+    parser.add_argument("--auto-approve", action="store_true", help="HITL 자동 승인 (AI 추천안 자동 선택)")
     args = parser.parse_args()
+
+    if args.auto_approve:
+        os.environ["AUTO_APPROVE"] = "1"
+        print("⚡  AUTO_APPROVE 모드: HITL 자동 승인 활성화\n")
 
     print(f"\n📂  데이터: {args.csv_dir}")
     kpi_list = load_kpi_snapshot(args.csv_dir, snapshot_time=args.snapshot)
@@ -51,6 +58,12 @@ def main() -> None:
         "cascade_report": None,
         "solution_candidates": [],
         "hitl_approved": None,
+        "verification_results": [],
+        "compare_inputs": [],
+        "compare_formatted": [],
+        "compare_results": [],
+        "report_draft": [],
+        "report_results": [],
     }
 
     state = build_pipeline(csv_dir=args.csv_dir).invoke(initial_state)
@@ -72,6 +85,8 @@ def main() -> None:
     if args.cause_only:
         solutions = [s for s in solutions if s["toolgroup"] == args.cause_only]
     print_solutions(solutions)
+
+    print_report_results(state["report_results"])
 
     token_tracker.print_summary()
     token_tracker.save_log()

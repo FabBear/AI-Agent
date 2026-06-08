@@ -1,201 +1,355 @@
 #!/usr/bin/env python3
-"""
-보고서 생성 Agent — LangGraph 기반
+"""최종보고서 생성 Agent (Agent 06) — PipelineState 통합 노드."""
 
-입력: mock_report_input.json 형태의 dict
-출력: reports/ 폴더에 Markdown + JSON 저장
-
-실행:
-    python -m agents.report_agent.node agents/report_agent/mock_report_input.json
-"""
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from langgraph.graph import END, StateGraph
+if TYPE_CHECKING:
+    from agents.state import PipelineState
 
-from agents.report_agent.writer import (
-    ReportState,
-    write_summary,
-    write_diffusion,
-    write_cause,
-    write_actions,
-)
+from agents.report_agent.writer import write_summary, write_diffusion, write_cause, write_actions
 
-# ── 경로 설정 ─────────────────────────────────────────────────────────────────
 _ROOT = Path(__file__).parent.parent.parent
 REPORTS_DIR = _ROOT / "report_agent_out"
 
 
-# ── Non-LLM Node 함수들 ───────────────────────────────────────────────────────
+# ── 내부 헬퍼 ─────────────────────────────────────────────────────────────────
 
-def node_write_header(state: ReportState) -> dict:
-    """헤더 — LLM 불필요, 구조화 데이터로 직접 생성"""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    severity = state.get("severity", "MEDIUM")
-    badge = {"HIGH": "🔴 HIGH", "MEDIUM": "🟡 MEDIUM", "LOW": "🟢 LOW"}.get(severity, severity)
-    header = (
-        f"# FAB 병목 대응 보고서\n\n"
-        f"| 항목 | 내용 |\n"
-        f"|------|------|\n"
-        f"| 공정명 | `{state.get('process_name', '-')}` |\n"
-        f"| 심각도 | **{badge}** |\n"
-        f"| 탐지시각 | {state.get('detected_at', '-')} |\n"
-        f"| 보고서 생성일시 | {now} |\n\n"
-        f"---"
-    )
-    return {"section_header": header}
+def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report) -> dict:
+    """compare_result + PipelineState 데이터 → report_draft 초기 항목."""
+    tg = compare_result["toolgroup"]
+    detected_at = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    bottleneck_info: dict = {
+        "tool_group": tg,
+        "risk_score": round(float(alert.composite_score) * 100, 1),
+        "delayed_orders": int(alert.impact.at_risk_lots),
+    }
+    if kpi:
+        bottleneck_info.update({
+            "avg_queue_time_min": round(float(kpi.q_time_min), 1),
+            "peak_q_time_min": round(float(kpi.max_avg_q_time), 1),
+            "utilization_pct": round(float(kpi.utilization_avg) * 100, 1),
+            "load_ratio": round(float(kpi.wait_ratio), 4),
+            "wip_count": int(kpi.wip),
+            "available_tool_ratio": round(float(kpi.available_tool_ratio), 4),
+        })
 
-def node_write_approval(state: ReportState) -> dict:
-    """5. 승인 정보 — LLM 불필요, 구조화 데이터로 직접 생성"""
-    ai = state.get("approval_info") or {}
-    is_rejected = ai.get("status") == "반려"
-    detected_at = state.get("detected_at", "-")
+    fab_kpi: dict = {}
+    if kpi:
+        fab_kpi = {
+            "wip_total": int(kpi.wip),
+            "utilization_avg_pct": round(float(kpi.utilization_avg) * 100, 1),
+            "q_time_min": round(float(kpi.q_time_min), 1),
+            "wait_ratio": round(float(kpi.wait_ratio), 4),
+        }
 
-    if is_rejected:
-        section = (
-            f"## 5. 승인 정보\n\n"
-            f"| 항목 | 내용 |\n"
-            f"|------|------|\n"
-            f"| 탐지시각 | {detected_at} |\n"
-            f"| 검토자 | {ai.get('approved_by', '-')} ({ai.get('approved_role', '-')}) |\n"
-            f"| 상태 | 반려 |\n"
-            f"| 반려일시 | {ai.get('approved_at', '-')} |\n"
-            f"| 반려 사유 | {ai.get('rejection_reason', '-')} |"
-        )
-    else:
-        section = (
-            f"## 5. 승인 정보\n\n"
-            f"| 항목 | 내용 |\n"
-            f"|------|------|\n"
-            f"| 탐지시각 | {detected_at} |\n"
-            f"| 승인자 | {ai.get('approved_by', '-')} ({ai.get('approved_role', '-')}) |\n"
-            f"| 상태 | 승인 |\n"
-            f"| 승인일시 | {ai.get('approved_at', '-')} |\n"
-            f"| 의견 | {ai.get('comment', '-')} |"
-        )
-    return {"section_approval": section}
-
-
-def node_assemble(state: ReportState) -> dict:
-    """모든 섹션을 합쳐서 최종 Markdown 완성"""
-    sections = [
-        state.get("section_header", ""),
-        state.get("section_summary", ""),
-        state.get("section_diffusion", ""),
-        state.get("section_cause", ""),
-        state.get("section_actions", ""),
-        state.get("section_approval", ""),
+    bottleneck_trend = [
+        {
+            "snapshot_time_min": k.snapshot_time,
+            "q_time_min": round(float(k.q_time_min), 1),
+            "utilization": round(float(k.utilization_avg), 4),
+            "wip": int(k.wip),
+        }
+        for k in filter(None, [prev_kpi, kpi])
     ]
-    final_report = "\n\n".join(s for s in sections if s)
-    return {"final_report": final_report}
 
-
-def node_save(state: ReportState) -> dict:
-    """Markdown + JSON 파일로 저장"""
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base = f"report_{state.get('process_name', 'unknown')}_{timestamp}"
-
-    md_path = REPORTS_DIR / f"{base}.md"
-    md_path.write_text(state.get("final_report", ""), encoding="utf-8")
-
-    report_json = {
-        "meta": {
-            "process_name": state.get("process_name", "-"),
-            "severity": state.get("severity", "-"),
-            "detected_at": state.get("detected_at", "-"),
-            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        },
-        "bottleneck_info":      state.get("bottleneck_info", {}),
-        "fab_kpi":              state.get("fab_kpi", {}),
-        "bottleneck_trend":     state.get("bottleneck_trend", []),
-        "feature_trend":        state.get("feature_trend", []),
-        "shap_analysis":        state.get("shap_analysis", {}),
-        "tool_status":          state.get("tool_status", []),
-        "affected_lots_detail": state.get("affected_lots_detail", []),
-        "diffusion_analysis":   state.get("diffusion_analysis", {}),
-        "cause_analysis":       state.get("cause_analysis", []),
-        "action_effects":       state.get("action_effects", []),
-        "recommendation":       state.get("recommendation", {}),
-        "approval_info":        state.get("approval_info", {}),
-        "report_sections": {
-            "header":    state.get("section_header", ""),
-            "summary":   state.get("section_summary", ""),
-            "diffusion": state.get("section_diffusion", ""),
-            "cause":     state.get("section_cause", ""),
-            "actions":   state.get("section_actions", ""),
-            "approval":  state.get("section_approval", ""),
-        },
-        "full_markdown": state.get("final_report", ""),
+    affected_tgs = alert.impact.affected_tgs or []
+    diffusion_analysis = {
+        "is_bottleneck": True,
+        "bottleneck_location": tg,
+        "diffusion_path": [f"{tg} → {t}" for t in affected_tgs[:3]],
+        "affected_processes": [{"process": t, "status": "영향"} for t in affected_tgs],
+        "forward_simulation": {},
+        "line_stop_expected_min": int(alert.impact.ct_increase_min),
+        "risk_level": alert.severity.value,
     }
-    json_path = REPORTS_DIR / f"{base}.json"
-    json_path.write_text(
-        json.dumps(report_json, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
 
-    print(f"보고서 저장 완료: {md_path}")
-    print(f"JSON 저장 완료:   {json_path}")
-    return {"output_path": str(md_path), "json_output_path": str(json_path)}
+    cause_analysis: list[dict] = []
+    shap_analysis: dict = {}
+    feature_trend: list[dict] = []
 
+    if cause_report and cause_report.shap_top:
+        total = sum(abs(f.shap_value) for f in cause_report.shap_top) or 1.0
+        cause_analysis = [
+            {
+                "rank": i + 1,
+                "cause": f.feature,
+                "contribution_pct": round(abs(f.shap_value) / total * 100, 1),
+                "recommended_action": "",
+                "similar_case": "없음",
+            }
+            for i, f in enumerate(cause_report.shap_top)
+        ]
+        if cause_report.cause_summary:
+            cause_analysis.append({"summary": cause_report.cause_summary})
+        if hasattr(cause_report, "consensus") and cause_report.consensus:
+            c = cause_report.consensus
+            cause_analysis.append({
+                "consensus": {
+                    "confidence_level": c.confidence_level,
+                    "summary": c.summary,
+                    "g_star_confirmed": c.g_star_confirmed,
+                    "g_star_proba": c.g_star_proba,
+                    "agreed_features": c.agreed_features,
+                    "conflicted_features": c.conflicted_features,
+                }
+            })
 
-# ── Graph 구성 ─────────────────────────────────────────────────────────────────
+        shap_analysis = {
+            "model": "XGBoost",
+            "snapshot_time": cause_report.snapshot_time,
+            "toolgroup": tg,
+            "top_features": [
+                {
+                    "feature": f.feature,
+                    "value": round(float(f.kpi_value), 4),
+                    "shap": round(float(f.shap_value), 4),
+                    "share_abs_pct": round(abs(f.shap_value) / total * 100, 1),
+                    "direction": "병목 쪽으로 기여(+)" if f.shap_value > 0 else "병목 완화(-)",
+                }
+                for f in cause_report.shap_top
+            ],
+        }
 
-def build_graph():
-    g = StateGraph(ReportState)
+    if cause_report and cause_report.trend_top:
+        n = max((len(t.values) for t in cause_report.trend_top), default=0)
+        feat_map = {t.feature: t.values for t in cause_report.trend_top}
+        for i in range(n):
+            row: dict = {"time_label": f"T-{(n - 1 - i) * 60}분"}
+            for feat, vals in feat_map.items():
+                row[feat] = round(float(vals[i]), 4) if i < len(vals) else None
+            feature_trend.append(row)
 
-    g.add_node("header",    node_write_header)
-    g.add_node("summary",   write_summary)
-    g.add_node("diffusion", write_diffusion)
-    g.add_node("cause",     write_cause)
-    g.add_node("actions",   write_actions)
-    g.add_node("approval",  node_write_approval)
-    g.add_node("assemble",  node_assemble)
-    g.add_node("save",      node_save)
-
-    g.set_entry_point("header")
-    g.add_edge("header",    "summary")
-    g.add_edge("summary",   "diffusion")
-    g.add_edge("diffusion", "cause")
-    g.add_edge("cause",     "actions")
-    g.add_edge("actions",   "approval")
-    g.add_edge("approval",  "assemble")
-    g.add_edge("assemble",  "save")
-    g.add_edge("save",      END)
-
-    return g.compile()
-
-
-# ── 공개 인터페이스 ───────────────────────────────────────────────────────────
-
-def run_report_agent(input_data: dict) -> dict:
-    graph = build_graph()
-    result = graph.invoke(input_data)
     return {
-        "final_report":     result["final_report"],
-        "output_path":      result["output_path"],
-        "json_output_path": result["json_output_path"],
+        "toolgroup": tg,
+        "process_name": tg,
+        "severity": alert.severity.value,
+        "detected_at": detected_at,
+        "bottleneck_info": bottleneck_info,
+        "fab_kpi": fab_kpi,
+        "bottleneck_trend": bottleneck_trend,
+        "tool_status": [],
+        "affected_lots_detail": [],
+        "diffusion_analysis": diffusion_analysis,
+        "cause_analysis": cause_analysis,
+        "shap_analysis": shap_analysis,
+        "feature_trend": feature_trend,
+        "action_effects": compare_result.get("action_effects", []),
+        "recommendation": compare_result.get("recommendation", {}),
+        "approval_info": compare_result.get("approval_info", {}),
+        "section_header": "",
+        "section_summary": "",
+        "section_diffusion": "",
+        "section_cause": "",
+        "section_actions": "",
+        "section_approval": "",
     }
 
 
-# ── CLI 진입점 ────────────────────────────────────────────────────────────────
+# ── Pipeline 노드 ─────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
-    input_path = (
-        Path(sys.argv[1])
-        if len(sys.argv) > 1
-        else Path(__file__).parent / "mock_report_input.json"
-    )
+def report_prepare(state: "PipelineState") -> dict:
+    """Agent 6-1: 보고서 초안 생성 + 헤더/승인 섹션 (LLM 불필요)."""
+    from agents.logger import get_logger
+    _log = get_logger(__name__)
 
-    if not input_path.is_file():
-        print(f"입력 파일을 찾을 수 없습니다: {input_path}", file=sys.stderr)
-        sys.exit(1)
+    compare_results = state.get("compare_results", [])
+    if not compare_results:
+        _log.info("[Report] compare_results 없음 — 스킵")
+        return {"report_draft": []}
 
-    data = json.loads(input_path.read_text(encoding="utf-8"))
-    result = run_report_agent(data)
-    print("\n" + "=" * 60)
-    print(result["final_report"])
+    alerts = state.get("alerts", [])
+    kpi_snapshot = state.get("kpi_snapshot", [])
+    prev_kpi_snapshot = state.get("prev_kpi_snapshot", [])
+    cause_reports = state.get("cause_reports", [])
+
+    alert_map = {a.toolgroup: a for a in alerts}
+    kpi_map = {k.toolgroup: k for k in kpi_snapshot}
+    prev_kpi_map = {k.toolgroup: k for k in prev_kpi_snapshot}
+    cause_map = {r.toolgroup: r for r in cause_reports}
+
+    report_draft: list[dict] = []
+
+    for cr in compare_results:
+        tg = cr["toolgroup"]
+        alert = alert_map.get(tg)
+        if alert is None:
+            _log.warning(f"[Report] {tg}: alert 없음 — 스킵")
+            continue
+
+        item = _build_draft_item(
+            compare_result=cr,
+            alert=alert,
+            kpi=kpi_map.get(tg),
+            prev_kpi=prev_kpi_map.get(tg),
+            cause_report=cause_map.get(tg),
+        )
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        sev = item["severity"]
+        badge = {"HIGH": "🔴 HIGH", "MEDIUM": "🟡 MEDIUM", "LOW": "🟢 LOW", "Critical": "🚨 CRITICAL"}.get(sev, sev)
+        item["section_header"] = (
+            f"# FAB 병목 대응 보고서\n\n"
+            f"| 항목 | 내용 |\n"
+            f"|------|------|\n"
+            f"| 공정명 | `{item['process_name']}` |\n"
+            f"| 심각도 | **{badge}** |\n"
+            f"| 탐지시각 | {item['detected_at']} |\n"
+            f"| 보고서 생성일시 | {now} |\n\n"
+            f"---"
+        )
+
+        ai = item.get("approval_info") or {}
+        detected_at = item.get("detected_at", "-")
+        if ai.get("status") == "반려":
+            item["section_approval"] = (
+                f"## 5. 승인 정보\n\n"
+                f"| 항목 | 내용 |\n|------|------|\n"
+                f"| 탐지시각 | {detected_at} |\n"
+                f"| 검토자 | {ai.get('approved_by', '-')} ({ai.get('approved_role', '-')}) |\n"
+                f"| 상태 | 반려 |\n"
+                f"| 반려일시 | {ai.get('approved_at', '-')} |\n"
+                f"| 반려 사유 | {ai.get('rejection_reason', '-')} |"
+            )
+        else:
+            item["section_approval"] = (
+                f"## 5. 승인 정보\n\n"
+                f"| 항목 | 내용 |\n|------|------|\n"
+                f"| 탐지시각 | {detected_at} |\n"
+                f"| 승인자 | {ai.get('approved_by', '-')} ({ai.get('approved_role', '-')}) |\n"
+                f"| 상태 | 승인 |\n"
+                f"| 승인일시 | {ai.get('approved_at', '-')} |\n"
+                f"| 의견 | {ai.get('comment', '-')} |"
+            )
+
+        report_draft.append(item)
+
+    _log.info(f"[Report] prepare 완료 — {len(report_draft)}개 공정")
+    return {"report_draft": report_draft}
+
+
+def report_summary(state: "PipelineState") -> dict:
+    """Agent 6-2: 요약 섹션 LLM 작성."""
+    from agents.logger import get_logger
+    _log = get_logger(__name__)
+
+    draft = [dict(item) for item in state.get("report_draft", [])]
+    for item in draft:
+        try:
+            item["section_summary"] = write_summary(item)["section_summary"]
+            _log.info(f"[Report] {item['toolgroup']} summary 완료")
+        except Exception as e:
+            _log.error(f"[Report] {item['toolgroup']} summary 실패: {e}")
+    return {"report_draft": draft}
+
+
+def report_diffusion(state: "PipelineState") -> dict:
+    """Agent 6-3: 확산 영향 섹션 LLM 작성."""
+    from agents.logger import get_logger
+    _log = get_logger(__name__)
+
+    draft = [dict(item) for item in state.get("report_draft", [])]
+    for item in draft:
+        try:
+            item["section_diffusion"] = write_diffusion(item)["section_diffusion"]
+            _log.info(f"[Report] {item['toolgroup']} diffusion 완료")
+        except Exception as e:
+            _log.error(f"[Report] {item['toolgroup']} diffusion 실패: {e}")
+    return {"report_draft": draft}
+
+
+def report_cause(state: "PipelineState") -> dict:
+    """Agent 6-4: 원인 분석 섹션 LLM 작성."""
+    from agents.logger import get_logger
+    _log = get_logger(__name__)
+
+    draft = [dict(item) for item in state.get("report_draft", [])]
+    for item in draft:
+        try:
+            item["section_cause"] = write_cause(item)["section_cause"]
+            _log.info(f"[Report] {item['toolgroup']} cause 완료")
+        except Exception as e:
+            _log.error(f"[Report] {item['toolgroup']} cause 실패: {e}")
+    return {"report_draft": draft}
+
+
+def report_actions(state: "PipelineState") -> dict:
+    """Agent 6-5: 대응안 섹션 LLM 작성."""
+    from agents.logger import get_logger
+    _log = get_logger(__name__)
+
+    draft = [dict(item) for item in state.get("report_draft", [])]
+    for item in draft:
+        try:
+            item["section_actions"] = write_actions(item)["section_actions"]
+            _log.info(f"[Report] {item['toolgroup']} actions 완료")
+        except Exception as e:
+            _log.error(f"[Report] {item['toolgroup']} actions 실패: {e}")
+    return {"report_draft": draft}
+
+
+def report_save(state: "PipelineState") -> dict:
+    """Agent 6-6: 보고서 조립 + 저장 → report_results."""
+    from agents.logger import get_logger
+    _log = get_logger(__name__)
+
+    draft = state.get("report_draft", [])
+    if not draft:
+        return {"report_results": []}
+
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    report_results: list[dict] = []
+
+    for item in draft:
+        tg = item["toolgroup"]
+        sections = [
+            item.get("section_header", ""),
+            item.get("section_summary", ""),
+            item.get("section_diffusion", ""),
+            item.get("section_cause", ""),
+            item.get("section_actions", ""),
+            item.get("section_approval", ""),
+        ]
+        final_report = "\n\n".join(s for s in sections if s)
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = f"report_{tg}_{ts}"
+        md_path = REPORTS_DIR / f"{base}.md"
+        md_path.write_text(final_report, encoding="utf-8")
+
+        json_path = REPORTS_DIR / f"{base}.json"
+        json_path.write_text(
+            json.dumps({
+                "meta": {
+                    "process_name": item.get("process_name", "-"),
+                    "severity": item.get("severity", "-"),
+                    "detected_at": item.get("detected_at", "-"),
+                    "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                },
+                "bottleneck_info": item.get("bottleneck_info", {}),
+                "fab_kpi": item.get("fab_kpi", {}),
+                "diffusion_analysis": item.get("diffusion_analysis", {}),
+                "cause_analysis": item.get("cause_analysis", []),
+                "action_effects": item.get("action_effects", []),
+                "recommendation": item.get("recommendation", {}),
+                "approval_info": item.get("approval_info", {}),
+                "full_markdown": final_report,
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        print(f"보고서 저장 완료: {md_path}")
+        report_results.append({
+            "toolgroup": tg,
+            "output_path": str(md_path),
+            "json_output_path": str(json_path),
+        })
+        _log.info(f"[Report] {tg} 저장 완료 → {md_path}")
+
+    _log.info(f"[Report] 완료 — {len(report_results)}개 보고서")
+    return {"report_results": report_results}
