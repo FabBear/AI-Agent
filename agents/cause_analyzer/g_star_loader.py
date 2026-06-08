@@ -101,19 +101,23 @@ def _load_evidence(path: Path) -> dict[str, list[KpiEvidence]]:
     try:
         import pandas as pd
         df = pd.read_csv(path)
+        df = df.fillna({"delta_mean": 0.0, "t_p_adj": 1.0, "kpi_significant": 0})
         evidence: dict[str, list[KpiEvidence]] = {}
         for _, row in df.iterrows():
             tg = str(row.get("toolgroup", ""))
             kpi = str(row.get("kpi", ""))
             if not tg or not kpi:
                 continue
-            ev = KpiEvidence(
-                kpi=kpi,
-                delta_mean=float(row.get("delta_mean") or 0.0),
-                t_p_adj=float(row.get("t_p_adj") or 1.0),
-                significant=bool(int(row.get("kpi_significant", 0))),
-            )
-            evidence.setdefault(tg, []).append(ev)
+            try:
+                ev = KpiEvidence(
+                    kpi=kpi,
+                    delta_mean=float(row.get("delta_mean")),
+                    t_p_adj=float(row.get("t_p_adj")),
+                    significant=bool(int(row.get("kpi_significant"))),
+                )
+                evidence.setdefault(tg, []).append(ev)
+            except (ValueError, TypeError):
+                continue
         return evidence
     except Exception:
         return {}

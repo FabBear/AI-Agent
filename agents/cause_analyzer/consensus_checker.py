@@ -70,7 +70,7 @@ def check_consensus(
         # 유의미한 것 먼저, 나머지는 delta_mean 절대값 순
         g_star_sig_kpis = sorted(
             tg_evidence,
-            key=lambda e: (0 if e.significant else 1, e.t_p_adj),
+            key=lambda e: (0 if e.significant else 1, -abs(e.delta_mean)),
         )
 
     # 신뢰도 산출 (G* 통계 검정은 가중치 2배)

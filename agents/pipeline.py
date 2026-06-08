@@ -31,6 +31,9 @@ def _no_alerts(state: PipelineState) -> str:
 
 def _run_g_star(state: PipelineState) -> PipelineState:
     """Critical/High 알림 발생 시 G* 파이프라인을 실행한다."""
+    if not state["kpi_snapshot"]:
+        _log.warning("[G*] kpi_snapshot이 비어 있어 G*를 실행할 수 없습니다.")
+        return state
     snapshot_time = state["kpi_snapshot"][0].snapshot_time
     alerts = state["alerts"]
     anchor = max(alerts, key=lambda a: a.composite_score).toolgroup if alerts else ""

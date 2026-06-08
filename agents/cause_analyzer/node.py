@@ -12,7 +12,7 @@ from agents.cause_analyzer.upstream_tracker import find_upstream_suspects
 from agents.data.kpi_loader import load_kpi_window
 from agents.logger import get_logger
 from agents.schemas.alert import SeverityLevel
-from agents.schemas.cause import CauseReport, ConsensusResult, KpiComparison, SimForecast
+from agents.schemas.cause import CauseReport, ConsensusResult, GStarKpiResult, KpiComparison, SimForecast
 from agents.state import PipelineState
 
 _ANALYZE_SEVERITIES = {SeverityLevel.CRITICAL, SeverityLevel.HIGH}
@@ -100,7 +100,6 @@ def analyze_cause(
             g_star_tg_proba=g_star.tg_proba if g_star else None,
             g_star_n_total=g_star.n_total_tg if g_star else 0,
         )
-        from agents.schemas.cause import GStarKpiResult
         consensus = ConsensusResult(
             agreed_features=consensus_raw.agreed_features,
             conflicted_features=consensus_raw.conflicted_features,

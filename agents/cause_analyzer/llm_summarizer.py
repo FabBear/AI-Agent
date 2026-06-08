@@ -74,8 +74,8 @@ def _build_prompt(
 
     g_star_instruction = ""
     if consensus and consensus.g_star_confirmed:
-        g_star_tg_list = ", ".join(getattr(consensus, "g_star_toolgroups_all", []) or [])
-        confirmed_causes = [e for e in (getattr(consensus, "g_star_sig_kpis", []) or []) if e.significant]
+        g_star_tg_list = ", ".join(consensus.g_star_toolgroups_all or [])
+        confirmed_causes = [e for e in (consensus.g_star_sig_kpis or []) if e.significant]
         if confirmed_causes:
             cause_str = ", ".join(f"{e.kpi}(p={e.t_p_adj:.4f})" for e in confirmed_causes)
             g_star_instruction = f"※ G* T-test: 통계적 원인 KPI 확인됨 — {cause_str}. [주요 원인]에 이 KPI들이 통계적으로 비정상 상승이 확인된 원인임을 명시하세요."
