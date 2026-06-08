@@ -154,15 +154,50 @@ def compare_rank(state: "PipelineState") -> dict:
 
     compare_inputs: list[dict] = []
 
-    for result_group in verification_results:
+    # GlobalSolutionPlan 포맷(plan_id 키 존재): Plan A/B를 하나의 그룹으로 합산
+    global_plan_groups = [g for g in verification_results if "plan_id" in g]
+    per_tg_groups = [g for g in verification_results if "plan_id" not in g]
+
+    if global_plan_groups:
+        from agents.schemas.alert import SeverityLevel
+        critical_alerts = [a for a in alerts if a.severity == SeverityLevel.CRITICAL]
+        anchor_alert = (
+            max(critical_alerts, key=lambda a: a.composite_score)
+            if critical_alerts else None
+        )
+        if anchor_alert is None:
+            _log.warning("[Compare] GlobalSolutionPlan: CRITICAL anchor alert 없음 — 스킵")
+        else:
+            anchor_tg = anchor_alert.toolgroup
+            target_tgs = global_plan_groups[0].get("target_toolgroups", [])
+            all_verified: list[dict] = []
+            for g in global_plan_groups:
+                all_verified.extend(g.get("verified_candidates", []))
+            candidates = _build_action_candidates(all_verified)
+            scored = _rank_candidates(candidates)
+            compare_inputs.append({
+                "toolgroup": anchor_tg,
+                "process_name": f"글로벌 플랜 A/B ({', '.join(target_tgs[:3])}{'...' if len(target_tgs) > 3 else ''})",
+                "severity": anchor_alert.severity.value,
+                "snapshot_time": float(global_plan_groups[0].get("snapshot_time", t0)),
+                "t0": float(t0),
+                "horizon_min": HORIZON_MIN,
+                "bottleneck_info": _build_bottleneck_info(anchor_tg, anchor_alert, kpi_map.get(anchor_tg)),
+                "action_candidates": candidates,
+                "scored_actions": scored,
+            })
+
+    # 기존 per-TG 포맷
+    for result_group in per_tg_groups:
+        verified_candidates = result_group.get("verified_candidates", [])
+        if not verified_candidates:
+            _log.warning("[Compare] verified_candidates 없음 — 스킵")
+            continue
+
         tg = result_group["toolgroup"]
         alert = alert_map.get(tg)
         if alert is None:
             _log.warning(f"[Compare] {tg}: alert 없음 — 스킵")
-            continue
-        verified_candidates = result_group.get("verified_candidates", [])
-        if not verified_candidates:
-            _log.warning(f"[Compare] {tg}: verified_candidates 없음 — 스킵")
             continue
 
         candidates = _build_action_candidates(verified_candidates)
