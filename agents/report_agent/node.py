@@ -239,7 +239,7 @@ def report_prepare(state: "PipelineState") -> dict:
         )
 
         ai = item.get("approval_info") or {}
-        item_detected_at = item.get("detected_at", "-")
+        item_detected_at = item["detected_at"]
         if ai.get("status") == "반려":
             item["section_approval"] = (
                 f"## 5. 승인 정보\n\n"
