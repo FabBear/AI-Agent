@@ -97,7 +97,7 @@ def verify_solutions(state: PipelineState) -> PipelineState:
         return {**state, "verification_results": []}
 
     # GlobalSolutionPlan 포맷(plan_id 키 존재)은 아직 verification 미지원 — 스킵
-    if solution_candidates and "plan_id" in solution_candidates[0]:
+    if "plan_id" in solution_candidates[0]:
         _log.info("[Verify] GlobalSolutionPlan 포맷 — verification 스킵 (per-TG 통합 예정)")
         return {**state, "verification_results": []}
 
