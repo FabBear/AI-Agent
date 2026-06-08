@@ -24,13 +24,12 @@ _MAX_TOKENS = 600
 
 def _build_prompt(
     plan: GlobalSolutionPlan,
-    alerts: list[BottleneckAlert],
     cause_map: dict[str, CauseReport],
 ) -> str:
     tg_lines = "\n".join(
-        f"  - {a.toolgroup}: {cause_map[a.toolgroup].cause_summary[:100]}"
-        for a in alerts
-        if a.toolgroup in cause_map
+        f"  - {tg}: {cause_map[tg].cause_summary[:100]}"
+        for tg in plan.target_toolgroups
+        if tg in cause_map
     )
     return f"""당신은 반도체 FAB 운영 전문가입니다. 반드시 한국어로만 답변하세요.
 
@@ -63,7 +62,7 @@ def refine_plan(
         from openai import APIError, OpenAI, RateLimitError
 
         client = OpenAI(api_key=api_key)
-        prompt = _build_prompt(plan, alerts, cause_map)
+        prompt = _build_prompt(plan, cause_map)
 
         @retry(
             retry=retry_if_exception_type((RateLimitError, APIError)),

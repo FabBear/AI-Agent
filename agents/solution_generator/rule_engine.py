@@ -109,6 +109,8 @@ def generate_global_plans(
         a for a in alerts
         if a.severity == SeverityLevel.CRITICAL and a.toolgroup in cause_map
     ]
+    if not critical_alerts:
+        return []
     critical_causes = [cause_map[a.toolgroup] for a in critical_alerts]
     target_tgs = [a.toolgroup for a in critical_alerts]
 

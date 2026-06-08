@@ -7,7 +7,7 @@ from agents.state import PipelineState
 
 def generate_solutions(state: PipelineState) -> PipelineState:
     alerts = state["alerts"]
-    cause_map = {r.toolgroup: r for r in state.get("cause_reports", [])}
+    cause_map = {r.toolgroup: r for r in state["cause_reports"]}
     current_interval = state.get("current_release_interval")
 
     plans = generate_global_plans(alerts, cause_map, current_interval)
