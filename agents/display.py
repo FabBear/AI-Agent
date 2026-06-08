@@ -89,6 +89,18 @@ def print_cause_reports(reports: list[CauseReport]) -> None:
             print(f"  {'─' * 54}")
             print(f"  전망: {status}")
 
+        if r.consensus.g_star_confirmed and r.consensus.g_star_sig_kpis:
+            print(f"\n  [G* T-test — 병목 원인 검증]  신뢰도={r.consensus.confidence_level}")
+            has_cause = any(e.significant for e in r.consensus.g_star_sig_kpis)
+            for e in r.consensus.g_star_sig_kpis:
+                if e.significant:
+                    verdict = "★ 통계적 원인 확인 (비정상 상승)"
+                else:
+                    verdict = "정상 범위 (원인 아님)"
+                print(f"    {e.kpi:<25} Δ={e.delta_mean:+.1f}  p={e.t_p_adj:.4f}  {verdict}")
+            if not has_cause:
+                print(f"    → 통계적으로 확인된 영구 원인 없음 — 일시적 과부하 가능성")
+
         print(f"\n  📝 {r.cause_summary}")
         print("─" * 70)
 
@@ -116,3 +128,21 @@ def print_solutions(solutions: list[dict]) -> None:
             print(f"      근거: {cand['rationale']}")
             print()
         print("─" * 70)
+
+
+def print_report_results(report_results: list[dict]) -> None:
+    if not report_results:
+        return
+    print("=" * 70)
+    print("  최종보고서 생성 결과")
+    print("=" * 70)
+    for r in report_results:
+        tg = r.get("toolgroup", "-")
+        md = r.get("output_path", "")
+        js = r.get("json_output_path", "")
+        print(f"\n▶ {tg}")
+        if md:
+            print(f"  📄 Markdown: {md}")
+        if js:
+            print(f"  📋 JSON:     {js}")
+    print("─" * 70)

@@ -277,7 +277,7 @@ def insert_t0_snapshot(scenario_id: str, t0: float) -> tuple[int, int]:
                         "lot_id": w.lot_id,
                         "route_id": w.route_id,
                         "step_seq": w.current_step_seq,
-                        "status": w.status,
+                        "status": "QUEUING" if w.status == "QUEUE" else w.status,
                         "tg": w.tool_group,
                         "tool_id": w.tool_id,
                         "qpos": w.queue_position,

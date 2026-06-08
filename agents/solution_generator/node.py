@@ -1,5 +1,6 @@
 """LangGraph 노드: alerts + cause_reports → solution_candidates."""
 
+from agents.schemas.alert import SeverityLevel
 from agents.solution_generator.llm_generator import refine_candidates
 from agents.solution_generator.rule_engine import generate_candidates
 from agents.state import PipelineState
@@ -13,6 +14,8 @@ def generate_solutions(state: PipelineState) -> PipelineState:
     all_candidates: list[dict] = []
 
     for alert in alerts:
+        if alert.severity != SeverityLevel.CRITICAL:
+            continue
         cause = cause_map.get(alert.toolgroup)
         if cause is None:
             continue
