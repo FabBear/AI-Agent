@@ -12,10 +12,7 @@ from agents.cause_analyzer.upstream_tracker import find_upstream_suspects
 from agents.data.kpi_loader import load_kpi_window
 from agents.logger import get_logger
 from agents.schemas.alert import SeverityLevel
-from agents.schemas.cause import (
-    CauseReport, ConsensusResult, GStarKpiResult,
-    KpiComparison, SimForecast,
-)
+from agents.schemas.cause import CauseReport, ConsensusResult, GStarKpiResult, KpiComparison, SimForecast
 from agents.state import PipelineState
 
 _ANALYZE_SEVERITIES = {SeverityLevel.CRITICAL, SeverityLevel.HIGH}

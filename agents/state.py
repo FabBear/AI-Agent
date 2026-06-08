@@ -12,6 +12,7 @@ class PipelineState(TypedDict):
     alerts: list[BottleneckAlert]
     cause_reports: list[CauseReport]
     cascade_report: str | None
+    current_release_interval: float | None  # 현재 Lot Release Interval (분), 없으면 None
     solution_candidates: list[dict]
     hitl_approved: bool | None
     hitl_token: str | None            # Webhook 모드 HITL 토큰 (Phase 1 → Phase 2 연결)

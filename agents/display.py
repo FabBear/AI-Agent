@@ -109,24 +109,26 @@ def print_solutions(solutions: list[dict]) -> None:
     if not solutions:
         return
     print("=" * 70)
-    print("  대응안 생성 결과")
+    print("  대응안 생성 결과 (Lot Release 테이블 조정)")
     print("=" * 70)
-    for sol in solutions:
-        tg = sol["toolgroup"]
-        sev = sol["severity"]
-        score = sol["composite_score"]
-        print(f"\n▶ {tg}  [{sev}]  종합점수={score:.0%}\n")
+    for plan in solutions:
+        plan_id = plan["plan_id"]
+        cur = plan.get("current_interval_minutes", 0.0)
+        interval = plan["release_interval_minutes"]
+        priority = plan.get("lot_priority_rule") or "변경 없음"
+        superhotlot = "활성화" if plan.get("superhotlot_enable") else "비활성화"
+        tgs = plan.get("target_toolgroups", [])
+        conf = plan["confidence"]
+        bar = "●●●" if conf >= 0.8 else "●●○" if conf >= 0.6 else "●○○"
 
-        for cand in sol["candidates"]:
-            conf = cand["confidence"]
-            bar = "●●●" if conf >= 0.8 else "●●○" if conf >= 0.6 else "●○○"
-            params = {k: v for k, v in cand["params"].items() if v is not None}
-            print(f"  [{cand['rank']}] {cand['name']}  신뢰도 {bar} {conf:.0%}")
-            print(f"      파라미터: {params}")
-            print(f"      목표 KPI: {cand['target_kpi']}")
-            print(f"      효과: {cand['expected_effect'][:120]}...")
-            print(f"      근거: {cand['rationale']}")
-            print()
+        print(f"\n▶ 플랜 {plan_id}  신뢰도 {bar} {conf:.0%}")
+        print(f"   Release Interval : {cur:.1f}분 → {interval:.1f}분  (+{interval - cur:.1f}분)")
+        print(f"   투입 우선순위     : {priority} 적용")
+        print(f"   SUPERHOTLOT      : {superhotlot}  (대상: {', '.join(tgs) if tgs else '없음'} 통과 대기 lot)")
+
+        effect = plan.get("expected_effect") or plan.get("description", "")
+        if effect:
+            print(f"   기대 효과: {effect[:200]}")
         print("─" * 70)
 
 

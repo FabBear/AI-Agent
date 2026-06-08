@@ -1,17 +1,20 @@
-"""LangGraph 노드: alerts + cause_reports → solution_candidates."""
+"""LangGraph 노드: alerts + cause_reports → 시뮬 입력용 글로벌 플랜 A / B."""
 
 from agents.schemas.alert import SeverityLevel
 from agents.solution_generator.llm_generator import refine_candidates
 from agents.solution_generator.rule_engine import generate_candidates
+from agents.solution_generator.llm_generator import refine_plan
+from agents.solution_generator.rule_engine import generate_global_plans
 from agents.state import PipelineState
 
 
 def generate_solutions(state: PipelineState) -> PipelineState:
     alerts = state["alerts"]
-    cause_reports = state.get("cause_reports", [])
+    cause_map = {r.toolgroup: r for r in state["cause_reports"]}
+    current_interval = state.get("current_release_interval")
 
-    cause_map = {r.toolgroup: r for r in cause_reports}
-    all_candidates: list[dict] = []
+    plans = generate_global_plans(alerts, cause_map, current_interval)
+    plans = [refine_plan(plan, alerts, cause_map) for plan in plans]
 
     for alert in alerts:
         if alert.severity not in {SeverityLevel.CRITICAL, SeverityLevel.HIGH}:

@@ -11,6 +11,7 @@ from langgraph.graph import END, StateGraph
 from agents.bottleneck_detector.node import detect_bottlenecks
 from agents.cascade_analyzer.node import analyze_cascade
 from agents.cause_analyzer.node import analyze_cause
+from agents.logger import get_logger
 from agents.solution_generator.node import generate_solutions
 from agents.verification_agent.node import verify_solutions
 from agents.compare_agent.node import compare_rank, compare_llm, compare_hitl
@@ -47,6 +48,15 @@ def _read_run_id(csv_dir: Path) -> str:
             if run_id:
                 return run_id
     return ""
+
+_log = get_logger(__name__)
+
+_SIM_ROOT = Path(__file__).parent.parent.parent / "Simulation" / "simulation"
+_SIM_CSV = _SIM_ROOT / "sim_csv_out"
+_SIM_PY = _SIM_ROOT / ".venv" / "bin" / "python"
+_ML_G_STAR = _SIM_ROOT / "tools" / "ml_g_star_at_t0.py"
+_TRIGGER_FWD = _SIM_ROOT / "tools" / "trigger_forward_pipeline.py"
+_G_STAR_OUT = _SIM_ROOT / "out" / "ml_g_star_e2e"
 
 
 def _no_alerts(state: PipelineState) -> str:
@@ -100,6 +110,7 @@ def _run_g_star(state: PipelineState) -> PipelineState:
             [str(_SIM_PY), str(_TRIGGER_FWD),
              "--sim-csv-dir", str(_SIM_CSV),
              "--run-id", run_id,
+             "--run-id", scenario_id,
              "--t0", str(int(snapshot_time)),
              "--horizon", "120",
              "--scenario-id", scenario_id,
