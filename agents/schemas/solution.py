@@ -1,6 +1,26 @@
 from pydantic import BaseModel, Field
 
 
+class SimParamDelta(BaseModel):
+    """WHATIF 시뮬레이션에 적용할 파라미터 변화량."""
+
+    release_interval_delta_pct: float | None = None
+    lot_priority_rule: str | None = None
+    dispatch_rule: str | None = None
+    superhotlot_enable: bool = False
+
+
+class SolutionCandidate(BaseModel):
+    """툴그룹별 대응안 후보 (verification_agent 입력)."""
+
+    rank: int = 1
+    name: str = ""
+    target_kpi: str = "q_time_min"
+    params: SimParamDelta = Field(default_factory=SimParamDelta)
+    expected_effect: str = ""
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
 class GlobalSolutionPlan(BaseModel):
     """전체 Critical TG를 한번에 커버하는 글로벌 대응 플랜 (시뮬레이션 입력값).
 

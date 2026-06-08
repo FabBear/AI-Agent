@@ -103,11 +103,11 @@ def generate_global_plans(
     cause_map: dict[str, CauseReport],
     current_interval: float | None = None,
 ) -> list[GlobalSolutionPlan]:
-    """Critical 알림 전체를 받아 실데이터 기반 Lot Release 글로벌 플랜 A / B 를 생성한다."""
+    """Critical/High 알림 전체를 받아 실데이터 기반 Lot Release 글로벌 플랜 A / B 를 생성한다."""
     base = current_interval if current_interval is not None else _DEFAULT_INTERVAL
     critical_alerts = [
         a for a in alerts
-        if a.severity == SeverityLevel.CRITICAL and a.toolgroup in cause_map
+        if a.severity in {SeverityLevel.CRITICAL, SeverityLevel.HIGH} and a.toolgroup in cause_map
     ]
     if not critical_alerts:
         return []
