@@ -1,32 +1,16 @@
-"""LangGraph 노드: alerts + cause_reports → solution_candidates."""
+"""LangGraph 노드: alerts + cause_reports → 시뮬 입력용 글로벌 플랜 A / B."""
 
-from agents.solution_generator.llm_generator import refine_candidates
-from agents.solution_generator.rule_engine import generate_candidates
+from agents.solution_generator.llm_generator import refine_plan
+from agents.solution_generator.rule_engine import generate_global_plans
 from agents.state import PipelineState
 
 
 def generate_solutions(state: PipelineState) -> PipelineState:
     alerts = state["alerts"]
-    cause_reports = state.get("cause_reports", [])
+    cause_map = {r.toolgroup: r for r in state.get("cause_reports", [])}
+    current_interval = state.get("current_release_interval")
 
-    cause_map = {r.toolgroup: r for r in cause_reports}
-    all_candidates: list[dict] = []
+    plans = generate_global_plans(alerts, cause_map, current_interval)
+    plans = [refine_plan(plan, alerts, cause_map) for plan in plans]
 
-    for alert in alerts:
-        cause = cause_map.get(alert.toolgroup)
-        if cause is None:
-            continue
-
-        candidates = generate_candidates(cause, alert)
-        candidates = refine_candidates(alert, cause, candidates)
-
-        all_candidates.append(
-            {
-                "toolgroup": alert.toolgroup,
-                "severity": alert.severity.value,
-                "composite_score": alert.composite_score,
-                "candidates": [c.model_dump() for c in candidates],
-            }
-        )
-
-    return {**state, "solution_candidates": all_candidates}
+    return {**state, "solution_candidates": [p.model_dump() for p in plans]}
