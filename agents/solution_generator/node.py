@@ -14,7 +14,7 @@ def generate_solutions(state: PipelineState) -> PipelineState:
     all_candidates: list[dict] = []
 
     for alert in alerts:
-        if alert.severity != SeverityLevel.CRITICAL:
+        if alert.severity not in {SeverityLevel.CRITICAL, SeverityLevel.HIGH}:
             continue
         cause = cause_map.get(alert.toolgroup)
         if cause is None:
