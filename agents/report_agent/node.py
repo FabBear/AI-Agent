@@ -388,7 +388,7 @@ def report_save(state: "PipelineState") -> dict:
     _log.info(f"[Report] 완료 — {len(report_results)}개 보고서")
 
     # 검증 시뮬 데이터 정리 (보고서 저장 후)
-    verify_results = state.get("verification_results", [])
+    verify_results = state["verification_results"]
     scenario_ids = [r.get("whatif_scenario_id") for r in verify_results if r.get("whatif_scenario_id")]
     if scenario_ids:
         try:

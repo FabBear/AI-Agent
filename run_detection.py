@@ -67,12 +67,10 @@ def main() -> None:
     }
 
     pipeline = build_pipeline(csv_dir=args.csv_dir)
-    final_state: PipelineState | None = None
     alerted = False
 
     for chunk in pipeline.stream(initial_state):
         for node_name, state in chunk.items():
-            final_state = {**(final_state or {}), **state}
 
             if node_name == "cascade":
                 alerts = state.get("alerts", [])
