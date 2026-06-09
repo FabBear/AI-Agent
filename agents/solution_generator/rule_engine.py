@@ -89,15 +89,6 @@ def _superhotlot_enable(alerts: list[BottleneckAlert]) -> tuple[bool, float]:
     return total >= _SUPERHOTLOT_LOT_THRESHOLD, total
 
 
-def _confidence(cause_reports: list[CauseReport]) -> float:
-    if not cause_reports:
-        return 0.5
-    avg_shap = sum(
-        abs(r.shap_top[0].shap_value) for r in cause_reports if r.shap_top
-    ) / max(len(cause_reports), 1)
-    return round(min(0.5 + avg_shap / 10, 0.90), 2)
-
-
 def generate_global_plans(
     alerts: list[BottleneckAlert],
     cause_map: dict[str, CauseReport],
@@ -117,7 +108,6 @@ def generate_global_plans(
     delta = _interval_delta(critical_causes, base)
     priority = _priority_rule(critical_causes)
     superhotlot, at_risk_lots = _superhotlot_enable(critical_alerts)
-    conf = _confidence(critical_causes)
 
     plans: list[GlobalSolutionPlan] = []
     for plan_id, interval in [("A", base + delta), ("B", base + delta + _COMPARISON_STEP)]:
@@ -139,7 +129,6 @@ def generate_global_plans(
                     f"대상 TG: {', '.join(target_tgs) if target_tgs else '없음'}"
                 ),
                 expected_effect="",
-                confidence=conf,
             )
         )
     return plans
