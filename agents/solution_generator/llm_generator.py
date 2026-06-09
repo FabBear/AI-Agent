@@ -8,6 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from agents import config
 from agents.logger import get_logger
 from agents.schemas.alert import BottleneckAlert
 from agents.schemas.cause import CauseReport
@@ -18,7 +19,6 @@ _log = get_logger(__name__)
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
-_MODEL = "gpt-4o-mini"
 _MAX_TOKENS = 600
 
 
@@ -72,10 +72,10 @@ def refine_plan(
         )
         def _call():
             return client.chat.completions.create(
-                model=_MODEL,
+                model=config.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=_MAX_TOKENS,
-                temperature=0.2,
+                temperature=config.LLM_TEMPERATURE,
             )
 
         response = _call()
