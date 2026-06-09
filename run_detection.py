@@ -66,27 +66,41 @@ def main() -> None:
         "report_results": [],
     }
 
-    state = build_pipeline(csv_dir=args.csv_dir).invoke(initial_state)
+    pipeline = build_pipeline(csv_dir=args.csv_dir)
+    final_state: PipelineState | None = None
+    alerted = False
 
-    alerts = state["alerts"]
-    if not alerts:
+    for chunk in pipeline.stream(initial_state):
+        for node_name, state in chunk.items():
+            final_state = {**(final_state or {}), **state}
+
+            if node_name == "cascade":
+                alerts = state.get("alerts", [])
+                if not alerts:
+                    print("\n✅  병목 없음\n")
+                    return
+                alerted = True
+                print(f"[2단계] 확산 영향 분석 완료 → {len(alerts)}개 알림\n")
+                print_alert_table(alerts)
+
+            elif node_name == "cause":
+                reports = state.get("cause_reports", [])
+                if args.cause_only:
+                    reports = [r for r in reports if r.toolgroup == args.cause_only]
+                print_cause_reports(reports)
+
+            elif node_name == "solution":
+                solutions = state.get("solution_candidates", [])
+                if args.cause_only:
+                    solutions = [s for s in solutions if s.get("toolgroup") == args.cause_only]
+                print_solutions(solutions)
+
+            elif node_name == "report_save":
+                print_report_results(state.get("report_results", []))
+
+    if not alerted:
         print("\n✅  병목 없음\n")
         return
-
-    print(f"[2단계] 확산 영향 분석 완료 → {len(alerts)}개 알림\n")
-    print_alert_table(alerts)
-
-    reports = state["cause_reports"]
-    if args.cause_only:
-        reports = [r for r in reports if r.toolgroup == args.cause_only]
-    print_cause_reports(reports)
-
-    solutions = state["solution_candidates"]
-    if args.cause_only:
-        solutions = [s for s in solutions if s["toolgroup"] == args.cause_only]
-    print_solutions(solutions)
-
-    print_report_results(state["report_results"])
 
     token_tracker.print_summary()
     token_tracker.save_log()

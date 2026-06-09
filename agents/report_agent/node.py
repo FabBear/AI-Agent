@@ -386,4 +386,15 @@ def report_save(state: "PipelineState") -> dict:
         _log.info(f"[Report] {tg} 저장 완료 → {md_path}")
 
     _log.info(f"[Report] 완료 — {len(report_results)}개 보고서")
+
+    # 검증 시뮬 데이터 정리 (보고서 저장 후)
+    verify_results = state.get("verification_results", [])
+    scenario_ids = [r.get("whatif_scenario_id") for r in verify_results if r.get("whatif_scenario_id")]
+    if scenario_ids:
+        try:
+            from agents.verification_agent.sim_executor import cleanup_verify_scenarios
+            cleanup_verify_scenarios(scenario_ids)
+        except Exception as e:
+            _log.warning(f"[Report] VERIFY 데이터 정리 실패 (무시): {e}")
+
     return {"report_results": report_results}

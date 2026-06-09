@@ -394,3 +394,82 @@ def run_whatif_paired(
 
     _log.info(f"[Exec] {group_id} 완료 — {len(pairs)}/{len(manifest_runs)} paired runs")
     return group_id, pairs, baseline_id
+
+
+# ── 사후 정리 ──────────────────────────────────────────────────────────────────
+
+def cleanup_verify_scenarios(scenario_ids: list[str]) -> None:
+    """VERIFY 시나리오 데이터를 DB와 CSV에서 삭제한다.
+
+    순서:
+      1. mes_scenario_run에서 simulation_run_id 수집 (삭제 전)
+      2. mes_scenario 삭제 → CASCADE로 하위 테이블 자동 삭제
+      3. simulation_log / lot_event_log / lot_release_ledger / tool_state_log 삭제
+      4. simulation_run 삭제
+      5. sim_verify_out 디렉토리 삭제
+    """
+    import shutil
+
+    if not scenario_ids:
+        return
+
+    session = get_session()
+    try:
+        # 1. simulation_run_id 수집
+        placeholders = ", ".join(f":sid{i}" for i in range(len(scenario_ids)))
+        params = {f"sid{i}": sid for i, sid in enumerate(scenario_ids)}
+
+        rows = session.execute(
+            text(f"SELECT simulation_run_id FROM mes_scenario_run WHERE scenario_id IN ({placeholders})"),
+            params,
+        ).fetchall()
+        run_ids = [r[0] for r in rows if r[0]]
+
+        # 2. mes_scenario 삭제 (CASCADE: wip/tool/queue/release_plan/whatif_action/kpi_diff/scenario_run 등)
+        session.execute(
+            text(f"DELETE FROM mes_scenario WHERE scenario_id IN ({placeholders})"),
+            params,
+        )
+
+        if run_ids:
+            run_placeholders = ", ".join(f":rid{i}" for i in range(len(run_ids)))
+            run_params = {f"rid{i}": rid for i, rid in enumerate(run_ids)}
+
+            # 3. 로그 테이블 삭제
+            for table in ("simulation_log", "lot_event_log", "lot_release_ledger", "tool_state_log"):
+                session.execute(
+                    text(f"DELETE FROM {table} WHERE run_id IN ({run_placeholders})"),
+                    run_params,
+                )
+
+            # 4. simulation_run 삭제
+            session.execute(
+                text(f"DELETE FROM simulation_run WHERE run_id IN ({run_placeholders})"),
+                run_params,
+            )
+
+        session.commit()
+        _log.info(f"[Cleanup] {len(scenario_ids)}개 VERIFY 시나리오 DB 삭제 완료")
+
+    except Exception as e:
+        session.rollback()
+        _log.warning(f"[Cleanup] DB 삭제 실패: {e}")
+    finally:
+        session.close()
+
+    # 5. sim_verify_out CSV 디렉토리 삭제
+    group_ids = set()
+    for sid in scenario_ids:
+        # VERIFY_PLAN_A_4740_f67e_R01 → VERIFY_PLAN_A_4740_f67e
+        parts = sid.rsplit("_R", 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            group_ids.add(parts[0])
+
+    for gid in group_ids:
+        group_dir = _VERIFY_OUT / gid
+        if group_dir.exists():
+            try:
+                shutil.rmtree(group_dir)
+                _log.info(f"[Cleanup] CSV 디렉토리 삭제: {group_dir.name}")
+            except Exception as e:
+                _log.warning(f"[Cleanup] CSV 디렉토리 삭제 실패 {group_dir}: {e}")
