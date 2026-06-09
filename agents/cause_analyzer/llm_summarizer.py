@@ -6,6 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from agents import config
 from agents.cause_analyzer.consensus_checker import ConsensusReport
 from agents.logger import get_logger
 from agents.schemas.cause import SHAPFeature, SimForecast, TrendInsight
@@ -15,7 +16,6 @@ _log = get_logger(__name__)
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
-_MODEL = "gpt-4o-mini"
 _MAX_TOKENS = 800
 
 
@@ -148,10 +148,10 @@ def _call_openai(
         )
         def _call():
             return client.chat.completions.create(
-                model=_MODEL,
+                model=config.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=_MAX_TOKENS,
-                temperature=0.2,
+                temperature=config.LLM_TEMPERATURE,
             )
 
         response = _call()

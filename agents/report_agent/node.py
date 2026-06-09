@@ -59,7 +59,7 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
         for k in filter(None, [prev_kpi, kpi])
     ]
 
-    affected_tgs = alert.impact.affected_tgs or []
+    affected_tgs = (alert.impact.affected_tgs or [])[:20]
 
     affected_processes = []
     for t in affected_tgs:

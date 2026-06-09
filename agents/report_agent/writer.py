@@ -9,10 +9,11 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agents import config
+
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 # ── LLM 설정 ──────────────────────────────────────────────────────────────────
-_MODEL = "gpt-4o-mini"
 _llm: Optional[ChatOpenAI] = None
 
 
@@ -25,7 +26,12 @@ def _get_llm() -> ChatOpenAI:
                 "OPENAI_API_KEY가 설정되지 않았습니다.\n"
                 "  프로젝트 루트의 .env 파일에 OPENAI_API_KEY를 추가하세요."
             )
-        _llm = ChatOpenAI(model=_MODEL, api_key=api_key, temperature=0.2, max_tokens=2000)
+        _llm = ChatOpenAI(
+            model=config.LLM_MODEL,
+            api_key=api_key,
+            temperature=config.LLM_TEMPERATURE,
+            max_tokens=3000,
+        )
     return _llm
 
 

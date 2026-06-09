@@ -35,3 +35,9 @@ IMPACT_WEIGHT: float = 0.50
 CRITICAL_SCORE: float = 0.75
 HIGH_SCORE: float = 0.55
 MEDIUM_SCORE: float = 0.35
+
+# ── LLM 설정 (전 Agent 공통) ──────────────────────────────────────────
+# 환경변수로 override 가능: LLM_MODEL=gpt-4o uv run python run_detection.py
+import os as _os
+LLM_MODEL: str = _os.getenv("LLM_MODEL", "gpt-5.4-mini")
+LLM_TEMPERATURE: float = float(_os.getenv("LLM_TEMPERATURE", "0.2"))
