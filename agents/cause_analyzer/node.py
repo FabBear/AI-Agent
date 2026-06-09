@@ -38,22 +38,32 @@ def analyze_cause(
     G = build_dag(csv_dir)
     window = load_kpi_window(csv_dir, snapshot_time, n_snapshots=6)
 
-    # G* 분석 결과 로드 (배치로 사전 생성된 파일)
-    g_star = load_g_star(t0=snapshot_time)
+    # G* 분석 결과 로드 — fwd_base_t{T0}/ 에서 동적으로 탐색
+    _SIM_CSV_DIR = Path(__file__).parent.parent.parent.parent / "Simulation" / "simulation" / "sim_csv_out"
+    fwd_base_dir = _SIM_CSV_DIR / f"fwd_base_t{int(snapshot_time)}"
+    g_star = load_g_star(t0=snapshot_time, out_dir=fwd_base_dir)
     if g_star:
         _log.info(f"[G*] {len(g_star.toolgroups)}개 TG 로드 (anchor={g_star.anchor_tg})")
     else:
         _log.info("[G*] 파일 없음 — G* 미반영")
     g_star_toolgroups = g_star.toolgroups if g_star else []
 
-    # Forward 시뮬: 한 번만 실행해서 결과 재사용
+    # Forward KPI: G* Step2 baseline 30회의 TG별 중위값을 재사용 (별도 forward sim 안 함)
+    # G* 결과가 없으면 fallback으로 1회 forward sim 실행
     forward_kpis: dict = {}
-    if run_sim:
+    manifest_csv = fwd_base_dir / "runs_manifest.csv"
+    if manifest_csv.is_file():
+        from agents.sim_runner.forecaster import load_forward_kpis_median
+
+        forward_kpis = load_forward_kpis_median(manifest_csv)
+        if forward_kpis:
+            _log.info(f"[Forward KPI] G* baseline 30회 중위값 사용 — {len(forward_kpis)}개 TG")
+    if not forward_kpis and run_sim:
         try:
             from agents.sim_runner.trigger import run_forward
             from agents.sim_runner.forecaster import load_forward_kpis
 
-            _log.info("[Forward Sim] 2시간 후 예측 시뮬레이션 실행 중...")
+            _log.info("[Forward Sim] G* baseline 없음/비어있음 — 1회 forward 시뮬 fallback")
             fwd_csv_dir = run_forward(t0=snapshot_time, horizon_min=120.0)
             forward_kpis = load_forward_kpis(fwd_csv_dir)
             _log.info(f"[Forward Sim] 완료 — {len(forward_kpis)}개 TG 결과")

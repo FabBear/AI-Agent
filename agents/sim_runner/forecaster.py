@@ -11,6 +11,7 @@ Forward 시뮬 출력 KPI를 읽어서 T0 vs T0+horizon 비교 결과를 반환�
 from __future__ import annotations
 
 from pathlib import Path
+from statistics import median
 
 import pandas as pd
 
@@ -72,6 +73,48 @@ def load_forward_kpis(csv_dir: Path) -> dict[str, ToolGroupKPI]:
             wip=row.get("wip", 0.0),
             setup_ratio_avg=row.get("setup_ratio_avg", 0.0),
             utilization_avg=row.get("utilization_avg", 0.0),
+            max_avg_q_time=0.0,
+            max_util=0.0,
+        )
+    return result
+
+
+def load_forward_kpis_median(manifest_csv: Path) -> dict[str, ToolGroupKPI]:
+    """G* Step2의 baseline 30회 런 결과를 TG별 중위값으로 집계해 반환.
+
+    runs_manifest.csv에서 status='ok'인 런들의 csv_dir을 읽고,
+    각 런의 마지막 스냅샷 TG KPI를 모아 TG별 KPI 필드의 중위값을 계산한다.
+    cause_analyzer의 SimForecast(2시간 후 예측)에 재사용해 별도 forward sim을 생략한다.
+    """
+    if not manifest_csv.is_file():
+        return {}
+
+    manifest = pd.read_csv(manifest_csv)
+    ok_runs = manifest[manifest["status"] == "ok"]
+    if ok_runs.empty:
+        return {}
+
+    per_tg: dict[str, list[ToolGroupKPI]] = {}
+    for _, row in ok_runs.iterrows():
+        run_dir = Path(row["csv_dir"])
+        if not run_dir.is_dir():
+            continue
+        for tg, kpi in load_forward_kpis(run_dir).items():
+            per_tg.setdefault(tg, []).append(kpi)
+
+    result: dict[str, ToolGroupKPI] = {}
+    for tg, kpis in per_tg.items():
+        if not kpis:
+            continue
+        result[tg] = ToolGroupKPI(
+            toolgroup=tg,
+            snapshot_time=kpis[0].snapshot_time,
+            available_tool_ratio=median(k.available_tool_ratio for k in kpis),
+            q_time_min=median(k.q_time_min for k in kpis),
+            wait_ratio=median(k.wait_ratio for k in kpis),
+            wip=median(k.wip for k in kpis),
+            setup_ratio_avg=median(k.setup_ratio_avg for k in kpis),
+            utilization_avg=median(k.utilization_avg for k in kpis),
             max_avg_q_time=0.0,
             max_util=0.0,
         )
