@@ -80,7 +80,7 @@ def _read_manifest_runs(t0: float) -> list[dict]:
         return []
 
 
-def _resolve_baseline_run_csv_dir(t0: float, run_index: int, original_csv_dir: str) -> Path | None:
+def _resolve_baseline_run_csv_dir(t0: float, original_csv_dir: str) -> Path | None:
     """개별 런의 baseline CSV 경로 탐색.
 
     탐색 순서:
@@ -316,7 +316,7 @@ def run_whatif_paired(
         seed = int(run["seed"])
         run_id = str(run.get("run_id", ""))
 
-        baseline_csv_dir = _resolve_baseline_run_csv_dir(t0, run_index, str(run["csv_dir"]))
+        baseline_csv_dir = _resolve_baseline_run_csv_dir(t0, str(run["csv_dir"]))
         if baseline_csv_dir is None:
             _log.warning(f"[Exec] run_{run_index:02d} baseline CSV 없음, 스킵")
             continue
