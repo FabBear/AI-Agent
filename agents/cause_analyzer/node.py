@@ -56,13 +56,14 @@ def analyze_cause(
         from agents.sim_runner.forecaster import load_forward_kpis_median
 
         forward_kpis = load_forward_kpis_median(manifest_csv)
-        _log.info(f"[Forward KPI] G* baseline 30회 중위값 사용 — {len(forward_kpis)}개 TG")
-    elif run_sim:
+        if forward_kpis:
+            _log.info(f"[Forward KPI] G* baseline 30회 중위값 사용 — {len(forward_kpis)}개 TG")
+    if not forward_kpis and run_sim:
         try:
             from agents.sim_runner.trigger import run_forward
             from agents.sim_runner.forecaster import load_forward_kpis
 
-            _log.info("[Forward Sim] G* baseline 없음 — 1회 forward 시뮬 fallback")
+            _log.info("[Forward Sim] G* baseline 없음/비어있음 — 1회 forward 시뮬 fallback")
             fwd_csv_dir = run_forward(t0=snapshot_time, horizon_min=120.0)
             forward_kpis = load_forward_kpis(fwd_csv_dir)
             _log.info(f"[Forward Sim] 완료 — {len(forward_kpis)}개 TG 결과")
