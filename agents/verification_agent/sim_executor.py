@@ -1,7 +1,7 @@
 """WHATIF 시뮬레이션 30회 paired 실행.
 
 trigger.py(FORWARD) 패턴을 WHATIF 모드로 확장:
-  1. runs_manifest.csv에서 baseline scenario_id 조회 (FWD_BASE_T26820)
+  1. runs_manifest.csv에서 baseline scenario_id 조회 (fwd_base_t{T0})
   2. seed별 WHATIF mes_scenario 생성 (DRAFT)
   3. baseline 스냅샷 데이터 복사 (wip / tool / queue / release_plan)
   4. mes_whatif_action rows 삽입
@@ -34,25 +34,29 @@ _VENV_PYTHON = _SIM_ROOT / ".venv" / "bin" / "python"
 _RUNNER = _SIM_ROOT / "run_sim_forward_once.py"
 _VERIFY_OUT = _SIM_ROOT / "sim_verify_out"
 
-# Track A baseline: 30 pre-run FORWARD sims, manifest at this fixed path
-_MANIFEST_ROOT = _SIM_ROOT / "sim_csv_out" / "fwd_base_t26820"
-_MANIFEST_FILE = _MANIFEST_ROOT / "runs_manifest.csv"
-
 HORIZON_MIN = 120.0
+
+
+# ── manifest 경로 (T0 기반 동적) ──────────────────────────────────────────────
+
+def _manifest_root(t0: float) -> Path:
+    return _SIM_ROOT / "sim_csv_out" / f"fwd_base_t{int(t0)}"
+
+
+def _manifest_file(t0: float) -> Path:
+    return _manifest_root(t0) / "runs_manifest.csv"
 
 
 # ── manifest 읽기 ──────────────────────────────────────────────────────────────
 
 def find_baseline_scenario(t0: float) -> str | None:
-    """runs_manifest.csv에서 baseline scenario_id를 반환.
-
-    DB 재조회 없이 Track A 사전 완료 시나리오(FWD_BASE_T26820)를 재사용.
-    """
-    if not _MANIFEST_FILE.is_file():
-        _log.warning(f"[Exec] runs_manifest.csv 없음: {_MANIFEST_FILE}")
+    """runs_manifest.csv에서 baseline scenario_id를 반환 (T0 기반 경로)."""
+    mf = _manifest_file(t0)
+    if not mf.is_file():
+        _log.warning(f"[Exec] runs_manifest.csv 없음: {mf}")
         return None
     try:
-        df = pd.read_csv(_MANIFEST_FILE)
+        df = pd.read_csv(mf)
         ok = df[df["status"] == "ok"]
         if ok.empty:
             return None
@@ -62,12 +66,13 @@ def find_baseline_scenario(t0: float) -> str | None:
         return None
 
 
-def _read_manifest_runs() -> list[dict]:
-    """runs_manifest.csv의 OK 런 목록 전체 반환."""
-    if not _MANIFEST_FILE.is_file():
+def _read_manifest_runs(t0: float) -> list[dict]:
+    """runs_manifest.csv의 OK 런 목록 전체 반환 (T0 기반 경로)."""
+    mf = _manifest_file(t0)
+    if not mf.is_file():
         return []
     try:
-        df = pd.read_csv(_MANIFEST_FILE)
+        df = pd.read_csv(mf)
         ok = df[df["status"] == "ok"].sort_values("run_index")
         return ok.to_dict("records")
     except Exception as e:
@@ -75,17 +80,17 @@ def _read_manifest_runs() -> list[dict]:
         return []
 
 
-def _resolve_baseline_run_csv_dir(run_index: int, original_csv_dir: str) -> Path | None:
+def _resolve_baseline_run_csv_dir(t0: float, run_index: int, original_csv_dir: str) -> Path | None:
     """개별 런의 baseline CSV 경로 탐색.
 
     탐색 순서:
       1. 매니페스트 원본 경로
-      2. 로컬 sim_csv_out/fwd_base_t26820/runs/<run_name>/
+      2. 로컬 sim_csv_out/fwd_base_t{T0}/runs/<run_name>/
     """
     original = Path(original_csv_dir)
     if original.is_dir():
         return original
-    local = _MANIFEST_ROOT / "runs" / original.name
+    local = _manifest_root(t0) / "runs" / original.name
     if local.is_dir():
         return local
     return None
@@ -295,10 +300,10 @@ def run_whatif_paired(
     if baseline_id is None:
         raise RuntimeError(
             f"runs_manifest.csv에서 baseline 시나리오를 찾을 수 없습니다 "
-            f"(manifest={_MANIFEST_FILE})."
+            f"(manifest={_manifest_file(t0)})."
         )
 
-    manifest_runs = _read_manifest_runs()
+    manifest_runs = _read_manifest_runs(t0)
     if not manifest_runs:
         raise RuntimeError("runs_manifest.csv에 OK 런이 없습니다.")
 
@@ -311,7 +316,7 @@ def run_whatif_paired(
         seed = int(run["seed"])
         run_id = str(run.get("run_id", ""))
 
-        baseline_csv_dir = _resolve_baseline_run_csv_dir(run_index, str(run["csv_dir"]))
+        baseline_csv_dir = _resolve_baseline_run_csv_dir(t0, run_index, str(run["csv_dir"]))
         if baseline_csv_dir is None:
             _log.warning(f"[Exec] run_{run_index:02d} baseline CSV 없음, 스킵")
             continue

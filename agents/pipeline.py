@@ -72,14 +72,18 @@ def _run_g_star(state: PipelineState) -> PipelineState:
     alerts = state["alerts"]
     anchor = max(alerts, key=lambda a: a.composite_score).toolgroup if alerts else ""
     scenario_id = f"FWD_G_STAR_T{int(snapshot_time)}"
-    g_star_file = _G_STAR_OUT / f"g_star_T{int(snapshot_time)}.json"
+
+    # T0 기반 동적 경로: G* 결과 + WHATIF baseline manifest 모두 여기에 저장
+    fwd_base_dir = _SIM_CSV / f"fwd_base_t{int(snapshot_time)}"
+    fwd_base_dir.mkdir(parents=True, exist_ok=True)
+    g_star_file = fwd_base_dir / f"g_star_T{int(snapshot_time)}.json"
 
     run_id = _read_run_id(_SIM_CSV)
     if not run_id:
         _log.warning("[G*] sim_csv_out/lot_events.csv에서 run_id를 읽을 수 없어 G*를 스킵합니다.")
         return state
 
-    _log.info(f"[G*] 실행 중... t0={snapshot_time}, anchor={anchor}")
+    _log.info(f"[G*] 실행 중... t0={snapshot_time}, anchor={anchor}, out={fwd_base_dir.name}")
 
     # Step 1: ML G* at T0
     try:
@@ -88,7 +92,7 @@ def _run_g_star(state: PipelineState) -> PipelineState:
              "--train-csv-dir", str(_SIM_CSV),
              "--inference-csv-dir", str(_SIM_CSV),
              "--t0", str(int(snapshot_time)),
-             "--out-dir", str(_G_STAR_OUT),
+             "--out-dir", str(fwd_base_dir),
              "--alarm-threshold", "0.7",
              "--snapshot-stride", "10",
              "--shap-top-k", "0"],
@@ -104,28 +108,28 @@ def _run_g_star(state: PipelineState) -> PipelineState:
         _log.warning(f"[G*] Step1 스킵: {e}")
         return state
 
-    # Step 2: trigger_forward_pipeline (Monte Carlo + t-test)
+    # Step 2: trigger_forward_pipeline (Monte Carlo 30회 + t-test)
+    # runs_manifest.csv + agent_handoff_g_star_analysis.json 모두 fwd_base_dir에 저장
     try:
         r = subprocess.run(
             [str(_SIM_PY), str(_TRIGGER_FWD),
              "--sim-csv-dir", str(_SIM_CSV),
              "--run-id", run_id,
-             "--run-id", scenario_id,
              "--t0", str(int(snapshot_time)),
              "--horizon", "120",
              "--scenario-id", scenario_id,
              "--g-star-file", str(g_star_file),
              "--baseline-csv-dir", str(_SIM_CSV),
              "--anchor-tg", anchor,
-             "--n-runs", "5",
-             "--parallel", "4",
-             "--out-dir", str(_G_STAR_OUT),
+             "--n-runs", "30",
+             "--parallel", "8",
+             "--out-dir", str(fwd_base_dir),
              "--skip-sim-if-manifest-exists"],
             capture_output=True, text=True,
             timeout=600, cwd=str(_SIM_ROOT),
         )
         if r.returncode == 0:
-            _log.info("[G*] Step2 완료 — agent_handoff_g_star_analysis.json 생성")
+            _log.info(f"[G*] Step2 완료 — {fwd_base_dir.name}/agent_handoff_g_star_analysis.json")
         else:
             _log.warning(f"[G*] Step2 실패: {r.stdout[-300:]}\n{r.stderr[-300:]}")
     except Exception as e:
