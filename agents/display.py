@@ -118,10 +118,7 @@ def print_solutions(solutions: list[dict]) -> None:
         priority = plan.get("lot_priority_rule") or "변경 없음"
         superhotlot = "활성화" if plan.get("superhotlot_enable") else "비활성화"
         tgs = plan.get("target_toolgroups", [])
-        conf = plan["confidence"]
-        bar = "●●●" if conf >= 0.8 else "●●○" if conf >= 0.6 else "●○○"
-
-        print(f"\n▶ 플랜 {plan_id}  신뢰도 {bar} {conf:.0%}")
+        print(f"\n▶ 플랜 {plan_id}")
         print(f"   Release Interval : {cur:.1f}분 → {interval:.1f}분  (+{interval - cur:.1f}분)")
         print(f"   투입 우선순위     : {priority} 적용")
         print(f"   SUPERHOTLOT      : {superhotlot}  (대상: {', '.join(tgs) if tgs else '없음'} 통과 대기 lot)")

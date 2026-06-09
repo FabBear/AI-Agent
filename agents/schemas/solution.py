@@ -18,7 +18,6 @@ class SolutionCandidate(BaseModel):
     target_kpi: str = "q_time_min"
     params: SimParamDelta = Field(default_factory=SimParamDelta)
     expected_effect: str = ""
-    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 class GlobalSolutionPlan(BaseModel):
@@ -36,4 +35,3 @@ class GlobalSolutionPlan(BaseModel):
     superhotlot_enable: bool  # 긴급 lot 플래그 활성화
     description: str
     expected_effect: str
-    confidence: float = Field(ge=0.0, le=1.0)
