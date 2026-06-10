@@ -152,14 +152,16 @@ def _call_openai(
 
         raw = response.choices[0].message.content or ""
         data = json.loads(raw)
+        raw_confidence = str(data.get("primary_confidence", "LOW")).upper()
+        confidence = raw_confidence if raw_confidence in ("HIGH", "MEDIUM", "LOW") else "LOW"
         return CauseJudgment(
             primary_cause=str(data.get("primary_cause", "")),
-            primary_confidence=data.get("primary_confidence", "LOW"),
+            primary_confidence=confidence,
             primary_reasoning=str(data.get("primary_reasoning", "")),
             secondary_causes=list(data.get("secondary_causes", [])),
             dismissed=list(data.get("dismissed", [])),
             dismissed_reason=str(data.get("dismissed_reason", "")),
-            needs_more_data=bool(data.get("needs_more_data", False)),
+            needs_more_data=str(data.get("needs_more_data", "")).lower() in ("true", "1"),
             cause_summary=str(data.get("cause_summary", "")),
         )
     except Exception as e:
