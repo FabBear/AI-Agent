@@ -17,7 +17,7 @@ from app.repositories.action_plan_repository import ActionPlanRepository
 from app.repositories.agent_step_repository import AgentStepRepository
 from app.repositories.cause_analysis_repository import CauseAnalysisRepository
 from app.repositories.response_report_repository import ResponseReportRepository
-from app.services.spring_client import SpringClient
+from app.services.spring_client import SpringClient, get_spring_client
 
 logger = logging.getLogger(__name__)
 _ROOT = Path(__file__).resolve().parents[2]
@@ -50,7 +50,7 @@ async def run_pipeline_with_timeout(
     except TimeoutError:
         step_repo = AgentStepRepository(pool)
         failed_step = await step_repo.mark_active_failed(case_id, "파이프라인 타임아웃")
-        await SpringClient(settings).notify_agent_step(
+        await get_spring_client(settings).notify_agent_step(
             case_id,
             failed_step or "DIFFUSION_ANALYSIS",
             "파이프라인 타임아웃",
@@ -74,7 +74,7 @@ async def run_pipeline(
     step_repo = AgentStepRepository(pool)
     cause_repo = CauseAnalysisRepository(pool)
     plan_repo = ActionPlanRepository(pool)
-    spring_client = SpringClient(settings)
+    spring_client = get_spring_client(settings)
     current_step = "cascade"
 
     await step_repo.init_steps(case_id)
@@ -134,9 +134,6 @@ async def run_pipeline(
             final_state,
             spring_client,
         )
-    except asyncio.CancelledError:
-        await step_repo.mark_failed(case_id, current_step, "파이프라인 타임아웃")
-        raise
     except Exception as exc:
         await step_repo.mark_failed(case_id, current_step, str(exc))
         await spring_client.notify_agent_step(
@@ -159,7 +156,7 @@ async def run_post_hitl(
 ) -> None:
     step_repo = AgentStepRepository(pool)
     report_repo = ResponseReportRepository(pool)
-    spring_client = SpringClient()
+    spring_client = get_spring_client()
 
     if decision == "REJECTED":
         await step_repo.mark_done(case_id, "hitl", "관리자 반려")
@@ -173,7 +170,7 @@ async def run_post_hitl(
     await step_repo.mark_done(case_id, "hitl", "관리자 승인")
     await step_repo.mark_in_progress(case_id, "report")
     try:
-        pending = _load_pending_state(case_id)
+        pending = await asyncio.to_thread(_load_pending_state, case_id)
         selected_plan = await ActionPlanRepository(pool).find_by_id(case_id, selected_plan_id)
         if selected_plan is None:
             raise ValueError("선택한 대응안을 찾을 수 없습니다.")

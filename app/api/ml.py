@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
@@ -52,7 +53,10 @@ async def predict(
         request.fab_id,
         request.snapshot_time,
     )
-    details = service.predict_all([record.kpi for record in records])
+    details = await asyncio.to_thread(
+        service.predict_all,
+        [record.kpi for record in records],
+    )
     records_by_code = {record.kpi.toolgroup: record for record in records}
     predictions = [
         Prediction(

@@ -8,11 +8,20 @@ from app.config import Settings, get_settings
 from app.repositories.agent_step_repository import STEP_NAME_MAP, STEP_ORDER_MAP
 
 logger = logging.getLogger(__name__)
+_spring_client: "SpringClient | None" = None
 
 
 class SpringClient:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
+        self._client = httpx.AsyncClient(
+            base_url=self._settings.spring_base_url,
+            headers={
+                "X-Internal-Token": self._settings.internal_api_token,
+                "Content-Type": "application/json",
+            },
+            timeout=httpx.Timeout(self._settings.agent_step_timeout_sec),
+        )
 
     async def notify_agent_step(
         self,
@@ -71,16 +80,26 @@ class SpringClient:
             logger.warning("내부 알림 전송 실패: %s", exc)
 
     async def _post(self, path: str, payload: dict) -> None:
-        headers = {
-            "X-Internal-Token": self._settings.internal_api_token,
-            "X-Event-Timestamp": datetime.now(UTC).isoformat(),
-            "Content-Type": "application/json",
-        }
-        timeout = httpx.Timeout(self._settings.agent_step_timeout_sec)
-        async with httpx.AsyncClient(
-            base_url=self._settings.spring_base_url,
-            headers=headers,
-            timeout=timeout,
-        ) as client:
-            response = await client.post(path, json=payload)
-            response.raise_for_status()
+        response = await self._client.post(
+            path,
+            json=payload,
+            headers={"X-Event-Timestamp": datetime.now(UTC).isoformat()},
+        )
+        response.raise_for_status()
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+
+def get_spring_client(settings: Settings | None = None) -> SpringClient:
+    global _spring_client
+    if _spring_client is None:
+        _spring_client = SpringClient(settings)
+    return _spring_client
+
+
+async def close_spring_client() -> None:
+    global _spring_client
+    if _spring_client is not None:
+        await _spring_client.close()
+        _spring_client = None

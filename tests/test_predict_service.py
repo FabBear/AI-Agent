@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 from agents.schemas.kpi import ToolGroupKPI
 from app.api.deps import get_predict_service
 from app.services.predict_service import PredictService
@@ -26,3 +28,21 @@ def test_predict_service_loads_model_and_returns_shap() -> None:
 
 def test_predict_service_dependency_reuses_instance() -> None:
     assert get_predict_service() is get_predict_service()
+
+
+def test_predict_service_loads_model_once_across_threads(monkeypatch) -> None:
+    load_count = 0
+
+    class FakeBooster:
+        def load_model(self, _: object) -> None:
+            nonlocal load_count
+            load_count += 1
+
+    monkeypatch.setattr("app.services.predict_service.xgb.Booster", FakeBooster)
+    service = PredictService()
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        boosters = list(executor.map(lambda _: service._load_model(), range(8)))
+
+    assert load_count == 1
+    assert all(booster is boosters[0] for booster in boosters)

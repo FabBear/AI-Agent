@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 
 import xgboost as xgb
 
@@ -27,6 +28,7 @@ class PredictService:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
         self._booster: xgb.Booster | None = None
+        self._model_lock = Lock()
 
     def predict(
         self,
@@ -79,9 +81,12 @@ class PredictService:
 
     def _load_model(self) -> xgb.Booster:
         if self._booster is None:
-            model_path = Path(self._settings.model_dir) / "bottleneck_xgb.ubj"
-            if not model_path.is_absolute():
-                model_path = Path(__file__).resolve().parents[2] / model_path
-            self._booster = xgb.Booster()
-            self._booster.load_model(model_path)
+            with self._model_lock:
+                if self._booster is None:
+                    model_path = Path(self._settings.model_dir) / "bottleneck_xgb.ubj"
+                    if not model_path.is_absolute():
+                        model_path = Path(__file__).resolve().parents[2] / model_path
+                    booster = xgb.Booster()
+                    booster.load_model(model_path)
+                    self._booster = booster
         return self._booster
