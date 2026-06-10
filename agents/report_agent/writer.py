@@ -30,7 +30,7 @@ def _get_llm() -> ChatOpenAI:
             model=config.LLM_MODEL,
             api_key=api_key,
             temperature=config.LLM_TEMPERATURE,
-            max_tokens=3000,
+            max_completion_tokens=3000,
         )
     return _llm
 

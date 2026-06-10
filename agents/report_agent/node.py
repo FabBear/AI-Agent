@@ -33,7 +33,7 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
     if kpi:
         bottleneck_info.update({
             "avg_queue_time_min": round(float(kpi.q_time_min), 1),
-            "peak_q_time_min": round(float(kpi.max_avg_q_time), 1),
+            "peak_q_time_min": round(float(kpi.q_time_min), 1),
             "utilization_pct": round(float(kpi.utilization_avg) * 100, 1),
             "load_ratio": round(float(kpi.wait_ratio), 4),
             "wip_count": int(kpi.wip),
@@ -100,36 +100,40 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
         "risk_level": alert.severity.value,
     }
 
-    cause_analysis: list[dict] = []
+    cause_analysis: dict = {}
     shap_analysis: dict = {}
     feature_trend: list[dict] = []
 
     if cause_report and cause_report.shap_top:
         total = sum(abs(f.shap_value) for f in cause_report.shap_top) or 1.0
-        cause_analysis = [
+        shap_top = [
             {
                 "rank": i + 1,
-                "cause": f.feature,
+                "feature": f.feature,
+                "kpi_value": round(float(f.kpi_value), 4),
+                "shap_value": round(float(f.shap_value), 4),
                 "contribution_pct": round(abs(f.shap_value) / total * 100, 1),
-                "recommended_action": "",
-                "similar_case": "없음",
             }
             for i, f in enumerate(cause_report.shap_top)
         ]
-        if cause_report.cause_summary:
-            cause_analysis.append({"summary": cause_report.cause_summary})
+
+        consensus_dict: dict | None = None
         if hasattr(cause_report, "consensus") and cause_report.consensus:
             c = cause_report.consensus
-            cause_analysis.append({
-                "consensus": {
-                    "confidence_level": c.confidence_level,
-                    "summary": c.summary,
-                    "g_star_confirmed": c.g_star_confirmed,
-                    "g_star_proba": c.g_star_proba,
-                    "agreed_features": c.agreed_features,
-                    "conflicted_features": c.conflicted_features,
-                }
-            })
+            consensus_dict = {
+                "confidence_level": c.confidence_level,
+                "agreed_features": c.agreed_features,
+                "conflicted_features": c.conflicted_features,
+                "g_star_confirmed": c.g_star_confirmed,
+                "g_star_proba": c.g_star_proba,
+                "summary": c.summary,
+            }
+
+        cause_analysis = {
+            "shap_top": shap_top,
+            "summary": cause_report.cause_summary or "",
+            "consensus": consensus_dict,
+        }
 
         shap_analysis = {
             "model": "XGBoost",
@@ -368,7 +372,7 @@ def report_save(state: "PipelineState") -> dict:
                 "bottleneck_info": item.get("bottleneck_info", {}),
                 "fab_kpi": item.get("fab_kpi", {}),
                 "diffusion_analysis": item.get("diffusion_analysis", {}),
-                "cause_analysis": item.get("cause_analysis", []),
+                "cause_analysis": item.get("cause_analysis", {}),
                 "action_effects": item.get("action_effects", []),
                 "recommendation": item.get("recommendation", {}),
                 "approval_info": item.get("approval_info", {}),
