@@ -17,7 +17,11 @@ class Settings(BaseSettings):
     agent_csv_dir: str = "../Simulation/simulation/sim_csv_out"
     model_dir: str = "models"
     agent_step_timeout_sec: int = 30
-    pipeline_timeout_sec: int = 90
+    pipeline_timeout_sec: int = 1200
+    risk_critical_threshold: float = 0.90
+    risk_high_threshold: float = 0.85
+    risk_medium_threshold: float = 0.70
+    bottleneck_threshold: float = 0.50
 
     model_config = SettingsConfigDict(
         env_file=".env",

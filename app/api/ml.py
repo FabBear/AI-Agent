@@ -1,15 +1,17 @@
-"""ML API stubs."""
-
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
+import asyncpg
 from fastapi import APIRouter, Depends
 from pydantic import Field
 
-from app.api.deps import verify_internal_token
+from app.api.deps import get_db, get_predict_service, verify_internal_token
 from app.api.schemas import ApiModel
 from app.common.responses import ApiResponse, success
+from app.config import Settings, get_settings
+from app.repositories.tg_metrics_repository import TgMetricsRepository
+from app.services.predict_service import PredictService
 
 router = APIRouter()
 
@@ -42,12 +44,51 @@ class PredictResult(ApiModel):
 async def predict(
     request: PredictRequest,
     _: Annotated[None, Depends(verify_internal_token)],
+    pool: Annotated[asyncpg.Pool, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    service: Annotated[PredictService, Depends(get_predict_service)],
 ) -> ApiResponse[PredictResult]:
-    snapshot_time = request.snapshot_time or datetime.now(timezone.utc)
+    records = await TgMetricsRepository(pool).find_latest_records_by_fab(
+        request.fab_id,
+        request.snapshot_time,
+    )
+    details = service.predict_all([record.kpi for record in records])
+    records_by_code = {record.kpi.toolgroup: record for record in records}
+    predictions = [
+        Prediction(
+            tg_id=records_by_code[detail.toolgroup].tg_id,
+            tg_code=detail.toolgroup,
+            bottleneck_prob=detail.probability,
+            risk_grade=_risk_grade(detail.probability, settings),
+            shap_top=[
+                ShapFeature(feature=item.feature, importance=item.importance)
+                for item in detail.shap_top
+            ],
+        )
+        for detail in details
+    ]
+    snapshot_time = max(
+        (record.measured_at for record in records),
+        default=request.snapshot_time,
+    )
+    if snapshot_time is None:
+        snapshot_time = datetime.now(UTC)
     return success(
         PredictResult(
             snapshot_time=snapshot_time,
-            predictions=[],
-            high_critical_count=0,
+            predictions=predictions,
+            high_critical_count=sum(
+                prediction.risk_grade in {"HIGH", "CRITICAL"} for prediction in predictions
+            ),
         )
     )
+
+
+def _risk_grade(probability: float, settings: Settings) -> str:
+    if probability >= settings.risk_critical_threshold:
+        return "CRITICAL"
+    if probability >= settings.risk_high_threshold:
+        return "HIGH"
+    if probability >= settings.risk_medium_threshold:
+        return "MEDIUM"
+    return "LOW"

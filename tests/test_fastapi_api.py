@@ -1,10 +1,12 @@
 """FastAPI endpoint contract tests."""
 
 from uuid import uuid4
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.deps import get_db
 from app.config import get_settings
 from app.main import app
 
@@ -17,12 +19,18 @@ INTERNAL_HEADERS = {
 
 
 @pytest.fixture
-async def client():
+async def client(monkeypatch):
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    app.dependency_overrides[get_db] = lambda: pool
+    monkeypatch.setattr("app.api.agent.run_pipeline_with_timeout", AsyncMock())
+    monkeypatch.setattr("app.api.agent.run_post_hitl", AsyncMock())
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as test_client:
         yield test_client
+    app.dependency_overrides.clear()
 
 
 def internal_token_headers() -> dict[str, str]:
@@ -108,6 +116,29 @@ async def test_hitl_result_uses_internal_headers(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_progress_returns_six_ddl_steps(client: AsyncClient) -> None:
     case_id = str(uuid4())
+    pool = app.dependency_overrides[get_db]()
+    pool.fetch.return_value = [
+        {
+            "step_order": index,
+            "step_name": step_name,
+            "status": "PENDING",
+            "started_at": None,
+            "completed_at": None,
+            "output_summary": None,
+            "attempt_no": 1,
+        }
+        for index, step_name in enumerate(
+            [
+                "DIFFUSION_ANALYSIS",
+                "CAUSE_ANALYSIS",
+                "ACTION_PLAN_GEN",
+                "ACTION_PLAN_COMPARE",
+                "HITL_WAITING",
+                "REPORT_GEN",
+            ],
+            start=1,
+        )
+    ]
     response = await client.get(
         f"/api/agent/cases/{case_id}/progress",
         headers=INTERNAL_HEADERS,
@@ -127,7 +158,7 @@ async def test_progress_returns_six_ddl_steps(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_predict_stub_returns_empty_predictions(client: AsyncClient) -> None:
+async def test_predict_returns_empty_predictions_without_metrics(client: AsyncClient) -> None:
     response = await client.post(
         "/api/ml/predict",
         headers=internal_token_headers(),

@@ -1,16 +1,17 @@
-"""Agent API stubs."""
-
 from datetime import datetime
 from enum import Enum
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+import asyncpg
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import Field, model_validator
 
-from app.api.deps import InternalUser, get_internal_user, verify_internal_token
+from app.api.deps import InternalUser, get_db, get_internal_user, verify_internal_token
 from app.api.schemas import ApiModel
 from app.common.responses import ApiResponse, success
+from app.repositories.agent_step_repository import AgentStepRepository
+from app.services.agent_service import run_pipeline_with_timeout, run_post_hitl
 
 router = APIRouter()
 
@@ -75,30 +76,44 @@ class ProgressResult(ApiModel):
     steps: list[ProgressStep]
 
 
-STEP_NAMES = (
-    "DIFFUSION_ANALYSIS",
-    "CAUSE_ANALYSIS",
-    "ACTION_PLAN_GEN",
-    "ACTION_PLAN_COMPARE",
-    "HITL_WAITING",
-    "REPORT_GEN",
-)
-
-
 @router.post("/run", status_code=202, response_model=ApiResponse[AgentRunResult])
 async def run_agent(
     request: AgentRunRequest,
+    background_tasks: BackgroundTasks,
     _: Annotated[None, Depends(verify_internal_token)],
+    pool: Annotated[asyncpg.Pool, Depends(get_db)],
 ) -> ApiResponse[AgentRunResult]:
+    background_tasks.add_task(
+        run_pipeline_with_timeout,
+        request.case_id,
+        request.tg_id,
+        request.tg_code,
+        request.snapshot_time,
+        request.bottleneck_prob,
+        request.risk_grade.value,
+        pool,
+    )
     return success(AgentRunResult(case_id=request.case_id))
 
 
 @router.post("/hitl-result", response_model=ApiResponse[HitlResult])
 async def receive_hitl_result(
     request: HitlResultRequest,
+    background_tasks: BackgroundTasks,
     _: Annotated[None, Depends(verify_internal_token)],
     __: Annotated[InternalUser, Depends(get_internal_user)],
+    pool: Annotated[asyncpg.Pool, Depends(get_db)],
 ) -> ApiResponse[HitlResult]:
+    background_tasks.add_task(
+        run_post_hitl,
+        request.case_id,
+        request.decision.value,
+        request.selected_plan_id,
+        request.decided_by,
+        request.decided_at,
+        request.comment,
+        pool,
+    )
     next_step = "REPORT_GENERATION" if request.decision == HitlDecision.APPROVED else "CLOSED"
     return success(HitlResult(case_id=request.case_id, next_step=next_step))
 
@@ -107,9 +122,8 @@ async def receive_hitl_result(
 async def get_case_progress(
     case_id: UUID,
     _: Annotated[InternalUser, Depends(get_internal_user)],
+    pool: Annotated[asyncpg.Pool, Depends(get_db)],
 ) -> ApiResponse[ProgressResult]:
-    steps = [
-        ProgressStep(step_order=index, step_name=step_name)
-        for index, step_name in enumerate(STEP_NAMES, start=1)
-    ]
+    rows = await AgentStepRepository(pool).find_by_case(case_id)
+    steps = [ProgressStep.model_validate(row) for row in rows]
     return success(ProgressResult(case_id=case_id, steps=steps))
