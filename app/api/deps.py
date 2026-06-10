@@ -1,6 +1,7 @@
 """FastAPI dependencies for authentication and database access."""
 
 import secrets
+from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 from app.common.errors import AppError
 from app.config import Settings, get_settings
 from app.db.pool import get_pool
+from app.services.predict_service import PredictService
 
 
 class InternalUser(BaseModel):
@@ -52,3 +54,12 @@ async def verify_internal_token(
 
 async def get_db() -> asyncpg.Pool:
     return await get_pool()
+
+
+def get_predict_service() -> PredictService:
+    return _get_predict_service()
+
+
+@lru_cache
+def _get_predict_service() -> PredictService:
+    return PredictService(get_settings())

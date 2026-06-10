@@ -133,12 +133,14 @@ def build_pipeline(
     run_sim: bool = True,
     run_g_star: bool = True,
     phase1_only: bool | None = None,
+    run_detection: bool = True,
 ):
     """파이프라인 그래프를 빌드하고 컴파일된 그래프를 반환한다.
 
     phase1_only=True  : detect → … → compare_hitl → END  (Webhook 모드 Phase 1)
     phase1_only=False : detect → … → compare_hitl → report_* → END  (일체형)
     phase1_only=None  : WEBHOOK_MODE 환경변수로 자동 결정
+    run_detection=False: 입력 state의 potential_bottlenecks를 사용해 cascade부터 실행
     """
     import os as _os
     if phase1_only is None:
@@ -162,8 +164,11 @@ def build_pipeline(
     g.add_node("compare_llm",  compare_llm)
     g.add_node("compare_hitl", compare_hitl)
 
-    g.set_entry_point("detect")
-    g.add_edge("detect",   "cascade")
+    if run_detection:
+        g.set_entry_point("detect")
+        g.add_edge("detect", "cascade")
+    else:
+        g.set_entry_point("cascade")
     g.add_conditional_edges("cascade", _no_alerts, {"g_star": "g_star", END: END})
     g.add_edge("g_star",   "cause")
     g.add_edge("cause",    "solution")

@@ -16,13 +16,17 @@ from app.common.errors import (
     validation_error_handler,
 )
 from app.db.pool import close_pool, get_pool
+from app.services.spring_client import close_spring_client
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await get_pool()
-    yield
-    await close_pool()
+    try:
+        yield
+    finally:
+        await close_spring_client()
+        await close_pool()
 
 
 app = FastAPI(
