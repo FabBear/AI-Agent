@@ -5,6 +5,7 @@ FORWARD 시나리오 생성 → VALIDATED 승격 → run_sim_forward_once.py 호
 from __future__ import annotations
 
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -16,8 +17,11 @@ from agents.sim_runner.snapshot_builder import insert_t0_snapshot
 
 _log = get_logger(__name__)
 
-_SIM_ROOT = Path(__file__).parent.parent.parent.parent / "Simulation" / "simulation"
-_VENV_PYTHON = _SIM_ROOT / ".venv" / "bin" / "python"
+_DOCKER_SIM_ROOT = Path("/app/simulation")
+_LOCAL_SIM_ROOT = Path(__file__).parent.parent.parent.parent / "Simulation" / "simulation"
+_IS_DOCKER = _DOCKER_SIM_ROOT.is_dir()
+_SIM_ROOT = _DOCKER_SIM_ROOT if _IS_DOCKER else _LOCAL_SIM_ROOT
+_VENV_PYTHON = Path(sys.executable) if _IS_DOCKER else _SIM_ROOT / ".venv" / "bin" / "python"
 _RUNNER = _SIM_ROOT / "run_sim_forward_once.py"
 _CSV_OUT = _SIM_ROOT / "sim_forward_out"
 
