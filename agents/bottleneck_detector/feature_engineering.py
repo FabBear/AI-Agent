@@ -1,7 +1,6 @@
-"""Build the feature matrix matching training in MLOps (feature_cols_kpi.json)."""
+"""Build the feature matrix matching Simulation/ML/data_labeling.ipynb §8 feature set."""
 
 import json
-import pickle
 from pathlib import Path
 
 import pandas as pd
@@ -10,21 +9,17 @@ from agents import config
 from agents.schemas.kpi import ToolGroupKPI
 
 _ROOT = Path(__file__).parent.parent.parent  # AI-Agent/
-_le_tg = None
 _feature_cols: list[str] | None = None
 
 _DELTA_COLS = ["q_time_min", "wait_ratio", "wip", "max_util", "utilization_avg"]
 
 
-def _load_artifacts() -> tuple:
-    global _le_tg, _feature_cols
-    if _le_tg is None:
-        with open(_ROOT / config.MODEL_DIR / config.LABEL_ENCODER_FILENAME, "rb") as f:
-            _le_tg = pickle.load(f)
+def _load_feature_cols() -> list[str]:
+    global _feature_cols
     if _feature_cols is None:
         with open(_ROOT / config.MODEL_DIR / config.FEATURE_COLS_FILENAME) as f:
             _feature_cols = json.load(f)
-    return _le_tg, _feature_cols
+    return _feature_cols
 
 
 def build_feature_matrix(
@@ -35,15 +30,10 @@ def build_feature_matrix(
 
     prev_kpi_list: t-120분 스냅샷. 제공 시 delta 피처 계산, 없으면 0.0으로 채움.
     """
-    le_tg, feature_cols = _load_artifacts()
+    feature_cols = _load_feature_cols()
 
     rows = [kpi.model_dump() for kpi in kpi_list]
     df = pd.DataFrame(rows)
-
-    # Unseen toolgroups fall back to first known class
-    known = set(le_tg.classes_)
-    df["toolgroup"] = df["toolgroup"].where(df["toolgroup"].isin(known), other=le_tg.classes_[0])
-    df["toolgroup_enc"] = le_tg.transform(df["toolgroup"].astype(str))
 
     # delta 피처 계산
     delta_feature_names = [f"{c}_delta_120" for c in _DELTA_COLS]

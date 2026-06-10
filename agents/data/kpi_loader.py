@@ -1,191 +1,134 @@
-"""Read KPI snapshots from Simulation sim_csv_out CSVs."""
+"""Read KPI snapshots from Backend DB (fabbear · ps_tg_metrics).
 
+Prerequisites:
+  - Backend DB V9 migration 적용 완료 (ps_tg_metrics.max_util 컬럼 존재)
+  - BACKEND_DATABASE_URL 환경변수 또는 기본값 사용
+"""
+
+from __future__ import annotations
+
+import os
 from pathlib import Path
 
-import pandas as pd
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
 
 from agents.schemas.kpi import ToolGroupKPI
 
-# kpi_toolgroup.csv wide pivot 캐시 — 키: (Path, mtime, size) 로 파일 변경 감지
-_tg_wide_cache: dict[tuple[Path, float, int], pd.DataFrame] = {}
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
-_TG_INSTANT_KPIS = ("q_time_min", "wait_ratio", "wip", "available_tool_ratio")
-_TG_WINDOW_KPIS = ("utilization_avg", "setup_ratio_avg")
-_TOOL_KPIS = {"utilization": "max_util", "avg_q_time": "max_avg_q_time"}
-_TOOL_CHUNK = 2_000_000
+_BACKEND_DB_URL = os.getenv(
+    "BACKEND_DATABASE_URL",
+    "postgresql+psycopg://fabbear_user:fabbear_pw@localhost:5432/fabbear",
+)
 
-
-def _tool_id_to_toolgroup(tool_id: str) -> str:
-    return tool_id.rsplit("#", 1)[0] if "#" in tool_id else tool_id
+_engine = None
 
 
-def load_kpi_snapshot(
-    csv_dir: str | Path, snapshot_time: float | None = None
-) -> list[ToolGroupKPI]:
-    """
-    Load one snapshot from sim_csv_out CSVs and return ToolGroupKPI list.
+def _get_engine():
+    global _engine
+    if _engine is None:
+        _engine = create_engine(_BACKEND_DB_URL, pool_pre_ping=True)
+    return _engine
 
-    snapshot_time: specific sim minute to load; if None, uses the latest snapshot.
-    """
-    csv_dir = Path(csv_dir)
-    tg_path = csv_dir / "kpi_toolgroup.csv"
-    tool_path = csv_dir / "kpi_tool.csv"
 
-    tg_long = pd.read_csv(
-        tg_path,
-        usecols=["snapshot_time", "scope", "kpi_name", "value", "window_minutes"],
-    ).rename(columns={"scope": "toolgroup"})
-    tg_long["snapshot_time"] = tg_long["snapshot_time"].astype(float)
+_SNAPSHOT_SQL = text("""
+SELECT
+    tg.tg_code                                        AS toolgroup,
+    m.time_step::float                                AS snapshot_time,
+    COALESCE(m.utilization_rate,      0)::float       AS utilization_avg,
+    COALESCE(m.wip_count,             0)::float       AS wip,
+    COALESCE(m.available_tool_ratio,  0)::float       AS available_tool_ratio,
+    COALESCE(m.avg_qtime_min,         0)::float       AS q_time_min,
+    COALESCE(m.setup_ratio,           0)::float       AS setup_ratio_avg,
+    COALESCE(m.wait_ratio,            0)::float       AS wait_ratio,
+    COALESCE(tool_max.max_util,       0)::float       AS max_util
+FROM ps_tg_metrics m
+JOIN tm_tool_group tg ON tg.tg_id = m.tg_id
+LEFT JOIN (
+    SELECT t.tg_id, MAX(tm.utilization_rate)::float AS max_util
+    FROM ps_tool_metrics tm
+    JOIN tm_tool t ON t.tool_id = tm.tool_id
+    WHERE tm.measured_at = :measured_at
+    GROUP BY t.tg_id
+) tool_max ON tool_max.tg_id = m.tg_id
+WHERE m.measured_at = :measured_at
+ORDER BY tg.tg_code
+""")
 
-    if snapshot_time is None:
-        snapshot_time = float(tg_long["snapshot_time"].max())
 
-    tg_snap = tg_long[tg_long["snapshot_time"] == snapshot_time]
-
-    instant = tg_snap[tg_snap["kpi_name"].isin(_TG_INSTANT_KPIS) & tg_snap["window_minutes"].isna()]
-    tg_wide = instant.pivot_table(
-        index=["snapshot_time", "toolgroup"],
-        columns="kpi_name",
-        values="value",
-        aggfunc="first",
-    ).reset_index()
-
-    window = tg_snap[tg_snap["kpi_name"].isin(_TG_WINDOW_KPIS)]
-    tg_wide_util = window.pivot_table(
-        index=["snapshot_time", "toolgroup"],
-        columns="kpi_name",
-        values="value",
-        aggfunc="first",
-    ).reset_index()
-
-    wide = tg_wide.merge(tg_wide_util, on=["snapshot_time", "toolgroup"], how="outer")
-
-    # Aggregate max tool-level KPIs for the snapshot
-    if tool_path.exists():
-        parts = []
-        reader = pd.read_csv(
-            tool_path,
-            chunksize=_TOOL_CHUNK,
-            usecols=["snapshot_time", "scope", "kpi_name", "value"],
-        )
-        for chunk in reader:
-            chunk = chunk[
-                (chunk["snapshot_time"].astype(float) == snapshot_time)
-                & chunk["kpi_name"].isin(_TOOL_KPIS)
-            ].copy()
-            if chunk.empty:
-                continue
-            chunk["toolgroup"] = chunk["scope"].map(_tool_id_to_toolgroup)
-            chunk["snapshot_time"] = chunk["snapshot_time"].astype(float)
-            parts.append(
-                chunk.groupby(["snapshot_time", "toolgroup", "kpi_name"], as_index=False)[
-                    "value"
-                ].max()
-            )
-
-        if parts:
-            tool_agg = (
-                pd.concat(parts)
-                .pivot(index=["snapshot_time", "toolgroup"], columns="kpi_name", values="value")
-                .reset_index()
-                .rename(columns=_TOOL_KPIS)
-            )
-            wide = wide.merge(tool_agg, on=["snapshot_time", "toolgroup"], how="left")
-
-    for col in ("max_util", "max_avg_q_time"):
-        if col not in wide.columns:
-            wide[col] = 0.0
-    wide = wide.fillna(0.0)
-
+def _rows_to_kpi_list(rows) -> list[ToolGroupKPI]:
     return [
         ToolGroupKPI(
-            toolgroup=row["toolgroup"],
-            snapshot_time=row["snapshot_time"],
-            available_tool_ratio=row.get("available_tool_ratio", 0.0),
-            q_time_min=row.get("q_time_min", 0.0),
-            wait_ratio=row.get("wait_ratio", 0.0),
-            wip=row.get("wip", 0.0),
-            setup_ratio_avg=row.get("setup_ratio_avg", 0.0),
-            utilization_avg=row.get("utilization_avg", 0.0),
-            max_avg_q_time=row.get("max_avg_q_time", 0.0),
-            max_util=row.get("max_util", 0.0),
+            toolgroup=r.toolgroup,
+            snapshot_time=float(r.snapshot_time),
+            utilization_avg=float(r.utilization_avg),
+            wip=float(r.wip),
+            available_tool_ratio=float(r.available_tool_ratio),
+            q_time_min=float(r.q_time_min),
+            setup_ratio_avg=float(r.setup_ratio_avg),
+            wait_ratio=float(r.wait_ratio),
+            max_util=float(r.max_util),
         )
-        for _, row in wide.iterrows()
+        for r in rows
     ]
 
 
-def _load_tg_wide(csv_dir: Path) -> pd.DataFrame:
-    """kpi_toolgroup.csv를 전체 wide 형태로 로드 (캐시). 파일 변경 시 자동 무효화."""
-    tg_path = csv_dir / "kpi_toolgroup.csv"
-    stat = tg_path.stat()
-    cache_key = (csv_dir, stat.st_mtime, stat.st_size)
-    if cache_key not in _tg_wide_cache:
-        tg_long = pd.read_csv(
-            tg_path,
-            usecols=["snapshot_time", "scope", "kpi_name", "value", "window_minutes"],
-        ).rename(columns={"scope": "toolgroup"})
-        tg_long["snapshot_time"] = tg_long["snapshot_time"].astype(float)
+def load_kpi_snapshot(snapshot_time: float | None = None) -> list[ToolGroupKPI]:
+    """최신 (또는 지정한 epoch-minute에 가장 가까운) 스냅샷의 TG KPI를 반환한다."""
+    engine = _get_engine()
+    with engine.connect() as conn:
+        if snapshot_time is None:
+            measured_at = conn.execute(
+                text("SELECT MAX(measured_at) FROM ps_tg_metrics")
+            ).scalar()
+        else:
+            # snapshot_time은 시뮬 tick(time_step); 숫자 비교로 가장 가까운 measured_at 선택
+            measured_at = conn.execute(text("""
+                SELECT measured_at
+                FROM ps_tg_metrics
+                ORDER BY ABS(time_step - :st)
+                LIMIT 1
+            """), {"st": int(snapshot_time)}).scalar()
 
-        instant = tg_long[
-            tg_long["kpi_name"].isin(_TG_INSTANT_KPIS) & tg_long["window_minutes"].isna()
-        ]
-        wide = instant.pivot_table(
-            index=["snapshot_time", "toolgroup"],
-            columns="kpi_name",
-            values="value",
-            aggfunc="first",
-        ).reset_index()
+        if measured_at is None:
+            return []
 
-        window = tg_long[tg_long["kpi_name"].isin(_TG_WINDOW_KPIS)]
-        util_wide = window.pivot_table(
-            index=["snapshot_time", "toolgroup"],
-            columns="kpi_name",
-            values="value",
-            aggfunc="first",
-        ).reset_index()
+        rows = conn.execute(_SNAPSHOT_SQL, {"measured_at": measured_at}).fetchall()
 
-        wide = wide.merge(util_wide, on=["snapshot_time", "toolgroup"], how="outer").fillna(0.0)
-        _tg_wide_cache.clear()  # 이전 캐시 메모리 해제
-        _tg_wide_cache[cache_key] = wide
-
-    return _tg_wide_cache[cache_key]
+    return _rows_to_kpi_list(rows)
 
 
 def load_kpi_window(
-    csv_dir: str | Path,
     snapshot_time: float,
     n_snapshots: int = 6,
     toolgroups: list[str] | None = None,
 ) -> dict[float, list[ToolGroupKPI]]:
-    """
-    snapshot_time 포함 직전 n_snapshots개 스냅샷의 KPI를 반환한다.
-    Returns: {snapshot_time: [ToolGroupKPI, ...]} (시간 오름차순)
-    """
-    csv_dir = Path(csv_dir)
-    wide = _load_tg_wide(csv_dir)
+    """snapshot_time 포함 직전 n_snapshots개 스냅샷의 KPI를 반환한다.
 
-    all_times = sorted(wide["snapshot_time"].unique())
-    idx = next((i for i, t in enumerate(all_times) if t >= snapshot_time), len(all_times) - 1)
-    window_times = all_times[max(0, idx - n_snapshots + 1) : idx + 1]
+    Returns: {snapshot_time(epoch-min): [ToolGroupKPI, ...]} (시간 오름차순)
+    """
+    engine = _get_engine()
+    with engine.connect() as conn:
+        times_rows = conn.execute(text("""
+            SELECT DISTINCT measured_at
+            FROM ps_tg_metrics
+            WHERE time_step <= :st
+            ORDER BY measured_at DESC
+            LIMIT :n
+        """), {"st": int(snapshot_time), "n": n_snapshots}).fetchall()
 
-    result: dict[float, list[ToolGroupKPI]] = {}
-    for t in window_times:
-        rows = wide[wide["snapshot_time"] == t]
-        if toolgroups:
-            rows = rows[rows["toolgroup"].isin(toolgroups)]
-        result[t] = [
-            ToolGroupKPI(
-                toolgroup=row["toolgroup"],
-                snapshot_time=row["snapshot_time"],
-                available_tool_ratio=row.get("available_tool_ratio", 0.0),
-                q_time_min=row.get("q_time_min", 0.0),
-                wait_ratio=row.get("wait_ratio", 0.0),
-                wip=row.get("wip", 0.0),
-                setup_ratio_avg=row.get("setup_ratio_avg", 0.0),
-                utilization_avg=row.get("utilization_avg", 0.0),
-                max_avg_q_time=row.get("max_avg_q_time", 0.0),
-                max_util=row.get("max_util", 0.0),
-            )
-            for _, row in rows.iterrows()
-        ]
+        if not times_rows:
+            return {}
+
+        result: dict[float, list[ToolGroupKPI]] = {}
+        for tr in reversed(times_rows):
+            rows = conn.execute(_SNAPSHOT_SQL, {"measured_at": tr[0]}).fetchall()
+            if toolgroups:
+                rows = [r for r in rows if r.toolgroup in toolgroups]
+            if not rows:
+                continue
+            epoch_min = float(rows[0].snapshot_time)
+            result[epoch_min] = _rows_to_kpi_list(rows)
+
     return result

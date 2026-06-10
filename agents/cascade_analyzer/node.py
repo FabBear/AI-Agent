@@ -1,7 +1,5 @@
 """LangGraph 노드: potential_bottlenecks + kpi_snapshot → alerts (심각도 결정)."""
 
-from pathlib import Path
-
 from agents import config
 from agents.cascade_analyzer.dag_builder import build_dag, get_downstream_tgs
 from agents.cascade_analyzer.impact_calculator import compute_impact
@@ -9,16 +7,11 @@ from agents.cascade_analyzer.scorer import build_alert
 from agents.schemas.alert import BottleneckAlert, SeverityLevel
 from agents.state import PipelineState
 
-_DEFAULT_CSV = (
-    Path(__file__).parent.parent.parent.parent / "Simulation" / "simulation" / "sample_csv"
-)
-
-
-def analyze_cascade(state: PipelineState, csv_dir: str | Path = _DEFAULT_CSV) -> PipelineState:
+def analyze_cascade(state: PipelineState) -> PipelineState:
     potential = state["potential_bottlenecks"]
     kpi_map = {k.toolgroup: k for k in state["kpi_snapshot"]}
 
-    G = build_dag(csv_dir)
+    G = build_dag()
 
     alerts: list[BottleneckAlert] = []
     for pb in potential:

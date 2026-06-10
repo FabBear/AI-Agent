@@ -7,9 +7,9 @@ U_HI: float = 0.8
 U_LO: float = 0.5
 
 # ── 모델 파일 경로 ────────────────────────────────────────────────────
-MODEL_DIR: str = "models"
+# Simulation 레포에서 학습 후 내보낸 모델을 AI-Agent 에서 직접 참조
+MODEL_DIR: str = "../Simulation/simulation/ML/out"
 MODEL_FILENAME: str = "bottleneck_xgb.ubj"
-LABEL_ENCODER_FILENAME: str = "label_encoder_tg.pkl"
 FEATURE_COLS_FILENAME: str = "bottleneck_feature_cols.json"
 
 # ── CASCADE 분석 ──────────────────────────────────────────────────────
