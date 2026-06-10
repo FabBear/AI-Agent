@@ -56,7 +56,7 @@ def _no_alerts(state: PipelineState) -> str:
 def _run_g_star(state: PipelineState) -> PipelineState:
     """Critical/High 알림 발생 시 G* 파이프라인을 실행한다."""
     # T0 = kpi_snapshot의 time_step (시뮬 tick 기준, epoch-minutes 아님)
-    kpi_snapshot = state.get("kpi_snapshot") or []
+    kpi_snapshot = state["kpi_snapshot"]
     if not kpi_snapshot:
         _log.warning("[G*] kpi_snapshot 없음 — G*를 스킵합니다.")
         return state

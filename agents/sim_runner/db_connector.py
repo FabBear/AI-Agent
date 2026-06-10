@@ -30,7 +30,7 @@ def get_session():
             @event.listens_for(_engine, "connect")
             def _set_search_path(dbapi_conn, _record):
                 cur = dbapi_conn.cursor()
-                cur.execute(f"SET search_path TO {_SIM_SCHEMA}, public")
+                cur.execute(f'SET search_path TO "{_SIM_SCHEMA}", public')
                 cur.close()
 
         _Session = sessionmaker(bind=_engine)

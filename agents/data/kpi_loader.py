@@ -46,11 +46,12 @@ SELECT
 FROM ps_tg_metrics m
 JOIN tm_tool_group tg ON tg.tg_id = m.tg_id
 LEFT JOIN (
-    SELECT t.tg_id, tm.measured_at, MAX(tm.utilization_rate)::float AS max_util
+    SELECT t.tg_id, MAX(tm.utilization_rate)::float AS max_util
     FROM ps_tool_metrics tm
     JOIN tm_tool t ON t.tool_id = tm.tool_id
-    GROUP BY t.tg_id, tm.measured_at
-) tool_max ON tool_max.tg_id = m.tg_id AND tool_max.measured_at = m.measured_at
+    WHERE tm.measured_at = :measured_at
+    GROUP BY t.tg_id
+) tool_max ON tool_max.tg_id = m.tg_id
 WHERE m.measured_at = :measured_at
 ORDER BY tg.tg_code
 """)
@@ -121,7 +122,7 @@ def load_kpi_window(
             return {}
 
         result: dict[float, list[ToolGroupKPI]] = {}
-        for tr in times_rows:
+        for tr in reversed(times_rows):
             rows = conn.execute(_SNAPSHOT_SQL, {"measured_at": tr[0]}).fetchall()
             if toolgroups:
                 rows = [r for r in rows if r.toolgroup in toolgroups]
