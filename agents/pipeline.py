@@ -24,7 +24,6 @@ from agents.report_agent.node import (
     report_save,
 )
 from agents.state import PipelineState
-from agents.logger import get_logger
 
 _log = get_logger(__name__)
 
@@ -49,15 +48,6 @@ def _read_run_id(csv_dir: Path) -> str:
                 return run_id
     return ""
 
-_log = get_logger(__name__)
-
-_SIM_ROOT = Path(__file__).parent.parent.parent / "Simulation" / "simulation"
-_SIM_CSV = _SIM_ROOT / "sim_csv_out"
-_SIM_PY = _SIM_ROOT / ".venv" / "bin" / "python"
-_ML_G_STAR = _SIM_ROOT / "tools" / "ml_g_star_at_t0.py"
-_TRIGGER_FWD = _SIM_ROOT / "tools" / "trigger_forward_pipeline.py"
-_G_STAR_OUT = _SIM_ROOT / "out" / "ml_g_star_e2e"
-
 
 def _no_alerts(state: PipelineState) -> str:
     return END if not state["alerts"] else "g_star"
@@ -65,10 +55,12 @@ def _no_alerts(state: PipelineState) -> str:
 
 def _run_g_star(state: PipelineState) -> PipelineState:
     """Critical/High 알림 발생 시 G* 파이프라인을 실행한다."""
-    if not state["kpi_snapshot"]:
-        _log.warning("[G*] kpi_snapshot이 비어 있어 G*를 실행할 수 없습니다.")
+    # T0 = kpi_snapshot의 time_step (시뮬 tick 기준, epoch-minutes 아님)
+    kpi_snapshot = state.get("kpi_snapshot") or []
+    if not kpi_snapshot:
+        _log.warning("[G*] kpi_snapshot 없음 — G*를 스킵합니다.")
         return state
-    snapshot_time = state["kpi_snapshot"][0].snapshot_time
+    snapshot_time = kpi_snapshot[0].snapshot_time
     alerts = state["alerts"]
     anchor = max(alerts, key=lambda a: a.composite_score).toolgroup if alerts else ""
     scenario_id = f"FWD_G_STAR_T{int(snapshot_time)}"
@@ -108,18 +100,17 @@ def _run_g_star(state: PipelineState) -> PipelineState:
         _log.warning(f"[G*] Step1 스킵: {e}")
         return state
 
-    # Step 2: trigger_forward_pipeline (Monte Carlo 30회 + t-test)
+    # Step 2: trigger_forward_pipeline (Monte Carlo 30회 + t-test) — DB 모드
     # runs_manifest.csv + agent_handoff_g_star_analysis.json 모두 fwd_base_dir에 저장
     try:
         r = subprocess.run(
             [str(_SIM_PY), str(_TRIGGER_FWD),
-             "--sim-csv-dir", str(_SIM_CSV),
+             "--source", "db",
              "--run-id", run_id,
              "--t0", str(int(snapshot_time)),
              "--horizon", "120",
              "--scenario-id", scenario_id,
              "--g-star-file", str(g_star_file),
-             "--baseline-csv-dir", str(_SIM_CSV),
              "--anchor-tg", anchor,
              "--n-runs", "30",
              "--parallel", "8",
@@ -139,7 +130,6 @@ def _run_g_star(state: PipelineState) -> PipelineState:
 
 
 def build_pipeline(
-    csv_dir: str | Path,
     run_sim: bool = True,
     run_g_star: bool = True,
     phase1_only: bool | None = None,
@@ -159,11 +149,11 @@ def build_pipeline(
     # Agent 1: 병목 감지
     g.add_node("detect", detect_bottlenecks)
     # Agent 2: 확산 영향
-    g.add_node("cascade", functools.partial(analyze_cascade, csv_dir=csv_dir))
+    g.add_node("cascade", analyze_cascade)
     # G* 분석 (cascade 이후, cause 이전)
     g.add_node("g_star", _run_g_star if run_g_star else lambda s: s)
     # Agent 3: 원인 분석 + 대응안 생성
-    g.add_node("cause",    functools.partial(analyze_cause, csv_dir=csv_dir, run_sim=run_sim))
+    g.add_node("cause", functools.partial(analyze_cause, run_sim=run_sim))
     g.add_node("solution", generate_solutions)
     # Agent 4: 대응안 효과 검증
     g.add_node("verify", verify_solutions)

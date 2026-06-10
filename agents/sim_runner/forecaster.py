@@ -73,7 +73,6 @@ def load_forward_kpis(csv_dir: Path) -> dict[str, ToolGroupKPI]:
             wip=row.get("wip", 0.0),
             setup_ratio_avg=row.get("setup_ratio_avg", 0.0),
             utilization_avg=row.get("utilization_avg", 0.0),
-            max_avg_q_time=0.0,
             max_util=0.0,
         )
     return result
@@ -115,7 +114,6 @@ def load_forward_kpis_median(manifest_csv: Path) -> dict[str, ToolGroupKPI]:
             wip=median(k.wip for k in kpis),
             setup_ratio_avg=median(k.setup_ratio_avg for k in kpis),
             utilization_avg=median(k.utilization_avg for k in kpis),
-            max_avg_q_time=0.0,
             max_util=0.0,
         )
     return result
