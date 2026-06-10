@@ -38,7 +38,9 @@ async def validation_error_handler(_: Request, exc: RequestValidationError) -> J
     )
 
 
-async def unhandled_error_handler(_: Request, __: Exception) -> JSONResponse:
+async def unhandled_error_handler(_: Request, exc: Exception) -> JSONResponse:
+    import logging
+    logging.getLogger(__name__).exception("Unhandled exception occurred")
     return JSONResponse(
         status_code=500,
         content=error_body("INTERNAL_SERVER_ERROR", "서버 내부 오류가 발생했습니다."),

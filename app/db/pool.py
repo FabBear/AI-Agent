@@ -17,6 +17,7 @@ async def get_pool() -> asyncpg.Pool:
             max_size=10,
             command_timeout=settings.agent_step_timeout_sec,
         )
+    assert _pool is not None
     return _pool
 
 

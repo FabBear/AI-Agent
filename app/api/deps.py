@@ -43,8 +43,8 @@ async def require_admin(
 
 
 async def verify_internal_token(
+    settings: Annotated[Settings, Depends(get_settings)],
     token: Annotated[str | None, Header(alias="X-Internal-Token")] = None,
-    settings: Annotated[Settings, Depends(get_settings)] = None,
 ) -> None:
     if token is None or not secrets.compare_digest(token, settings.internal_api_token):
         raise AppError(401, "INVALID_INTERNAL_TOKEN", "유효하지 않은 내부 토큰입니다.")
