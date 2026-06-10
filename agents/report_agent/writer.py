@@ -62,6 +62,7 @@ class ReportState(TypedDict):
     cause_analysis: dict
     action_effects: list
     recommendation: dict
+    decision_info: dict
     approval_info: dict
 
     # ── 생성된 섹션 ──
@@ -280,11 +281,25 @@ ML SHAP 분석: {json.dumps(shap, ensure_ascii=False)}
 
 
 def write_actions(state: ReportState) -> dict:
-    """4. 승인된 대응안 — 효과 요약 + A/B/C 비교표"""
+    """4. 승인된 대응안 — 의사결정 상태 + 효과 요약 + 트레이드오프 + 비교표"""
     effects = state.get("action_effects") or []
     rec = state.get("recommendation") or {}
     ai = state.get("approval_info") or {}
+    decision_info = state.get("decision_info") or {}
     is_rejected = ai.get("status") == "반려"
+
+    # 의사결정 상태 배지 (compare_agent에서 결정한 상태)
+    decision_status = decision_info.get("decision_status", "clear_winner")
+    status_badge = {
+        "clear_winner": "✅ 명확한 1위",
+        "equivalent_candidates": "⚠️ 통계적 동등 (운영 부담 tie-break 적용)",
+        "no_meaningful_effect": "🚨 효과 미검증 (운영 부담 최저 잠정 추천)",
+    }.get(decision_status, decision_status)
+    decision_caveat = decision_info.get("decision_caveat", "")
+    equivalent_set = decision_info.get("equivalent_set", [])
+
+    # LLM이 활용할 구조화 추천 (compare_agent의 recommendation.structured)
+    structured = rec.get("structured", {}) or {}
 
     if is_rejected:
         rejection_reason = ai.get("rejection_reason", "-")
@@ -293,21 +308,27 @@ def write_actions(state: ReportState) -> dict:
             f"""아래 데이터를 바탕으로 '승인된 대응안' 섹션을 작성하세요. 반려된 상황입니다.
 
 반려 사유: {rejection_reason}
+의사결정 상태: {status_badge}
+{f"  사유: {decision_caveat}" if decision_caveat else ""}
 전체 대응안 비교: {json.dumps(effects, ensure_ascii=False)}
 
 출력 형식 (이 형식 그대로):
 
 ## 4. 승인된 대응안
 
-### ① 승인된 대응안 예상 효과
+### ① 의사결정 상태
+- **상태**: {status_badge}
+{f"- **사유**: {decision_caveat}" if decision_caveat else ""}
+
+### ② 승인된 대응안 예상 효과
 승인된 대응안 없음. (반려됨)
 - **반려 사유**: {rejection_reason}
 
-### ② 대응안 A / B / C 비교
+### ③ 대응안 A / B / C 비교
 
-| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 처리량 변화 | 시뮬 신뢰도 |
-|--------|------|------|-------------|---------|-----------|------------|
-[각 대응안을 행으로 채울 것, ✅ 표시 없음, simulation_confidence는 % 단위로]
+| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 시뮬 신뢰도 | 운영 부담 | 영향 범위 |
+|--------|------|------|-------------|---------|-----------|----------|----------|
+[각 대응안을 행으로. action_metadata.effort/4 로 운영 부담, action_metadata.scope 로 영향 범위 표기. ✅ 표시 없음. simulation_confidence는 % 단위]
 
 ---""",
         )
@@ -323,7 +344,12 @@ def write_actions(state: ReportState) -> dict:
             f"""아래 데이터를 바탕으로 '승인된 대응안' 섹션을 작성하세요.
 
 승인된 대응안: {json.dumps(approved, ensure_ascii=False)}
-선택 이유: {rec.get('reason', '-')}
+선택 이유 (요약): {rec.get('reason', '-')}
+구조화 추천 근거 (헤드라인/주된 근거/트레이드오프/다른 후보 사유/주의사항/신뢰도):
+{json.dumps(structured, ensure_ascii=False)}
+의사결정 상태: {status_badge}
+{f"  사유: {decision_caveat}" if decision_caveat else ""}
+{f"  등가 후보: {', '.join(equivalent_set)}" if len(equivalent_set) >= 2 else ""}
 전체 대응안 비교: {json.dumps(effects, ensure_ascii=False)}
 영향 Lot 상세: {json.dumps(lots, ensure_ascii=False)}
 
@@ -331,16 +357,31 @@ def write_actions(state: ReportState) -> dict:
 
 ## 4. 승인된 대응안
 
-### ① 승인된 대응안 예상 효과
+### ① 의사결정 상태
+- **상태**: {status_badge}
+- **추천 신뢰도**: {structured.get('confidence_level', '-')}
+{f"- **사유**: {decision_caveat}" if decision_caveat else ""}
+
+### ② 승인된 대응안 예상 효과
 - **대응안**: {approved.get('action_kind')} — {approved.get('description')}
-- **선택 이유**: {rec.get('reason')}
+- **헤드라인**: {structured.get('headline', rec.get('reason', '-'))}
+- **핵심 근거**: {structured.get('primary_reason', '-')}
 - **예상 효과 요약**: [kpi_delta를 해석하여 한 문장으로]
 
-### ② 대응안 A / B / C 비교
+### ③ 받아들이는 트레이드오프
+[structured.tradeoffs가 비어있지 않으면 각 항목을 bullet로. 비어있으면 "- 통계적으로 유의미한 악화 KPI 없음" 한 줄]
 
-| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 처리량 변화 | 시뮬 신뢰도 |
-|--------|------|------|-------------|---------|-----------|------------|
-[각 대응안을 행으로, 승인된 것(label={rec.get('action_label')})에는 ✅ 표시, simulation_confidence는 % 단위로]
+### ④ 다른 후보를 선택하지 않은 이유
+[structured.why_not_others의 각 항목을 "- **{{label}}**: {{reason}}" 형식으로]
+
+### ⑤ 주의사항
+[structured.caveats를 bullet로. 비어있으면 "- 특이사항 없음"]
+
+### ⑥ 대응안 A / B / C 비교
+
+| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 시뮬 신뢰도 | 운영 부담 | 영향 범위 | 가역성 |
+|--------|------|------|-------------|---------|-----------|----------|----------|--------|
+[각 대응안을 행으로. action_metadata.effort/4 로 운영 부담, action_metadata.scope 로 영향 범위, action_metadata.reversibility 로 가역성 표기. 승인된 것(label={rec.get('action_label')})에는 ✅ 표시. simulation_confidence는 % 단위]
 
 ---""",
         )
