@@ -30,7 +30,7 @@ def _get_llm() -> ChatOpenAI:
             model=config.LLM_MODEL,
             api_key=api_key,
             temperature=config.LLM_TEMPERATURE,
-            max_tokens=3000,
+            max_completion_tokens=3000,
         )
     return _llm
 
@@ -59,7 +59,7 @@ class ReportState(TypedDict):
     diffusion_analysis: dict
     shap_analysis: dict
     feature_trend: list
-    cause_analysis: list
+    cause_analysis: dict
     action_effects: list
     recommendation: dict
     approval_info: dict
@@ -237,14 +237,16 @@ FAB 전체 KPI: {json.dumps(fab, ensure_ascii=False)}
 
 def write_cause(state: ReportState) -> dict:
     """3. 원인 분석 TOP 3"""
-    ca = state.get("cause_analysis") or []
+    ca = state.get("cause_analysis") or {}
     ft = state.get("feature_trend", [])
     shap = state.get("shap_analysis", {})
     section = _llm_write(
         _SYS,
         f"""아래 데이터를 바탕으로 '원인 분석 TOP 3' 섹션을 작성하세요.
 
-원인 분석 데이터: {json.dumps(ca, ensure_ascii=False)}
+원인 요약: {ca.get("summary", "")}
+SHAP 기여도 순위: {json.dumps(ca.get("shap_top", []), ensure_ascii=False)}
+컨센서스 판정: {json.dumps(ca.get("consensus"), ensure_ascii=False)}
 feature 트렌드 데이터: {json.dumps(ft, ensure_ascii=False)}
 ML SHAP 분석: {json.dumps(shap, ensure_ascii=False)}
 
@@ -252,12 +254,12 @@ ML SHAP 분석: {json.dumps(shap, ensure_ascii=False)}
 
 ## 3. 원인 분석 TOP 3
 
-| 순위 | 원인 | 기여도 | 권고 조치 |
-|------|------|--------|-----------|
-[각 원인을 행으로 채울 것, 기여도는 % 단위]
+| 순위 | 원인(feature) | 기여도(%) | 현재값 |
+|------|--------------|----------|--------|
+[shap_top의 rank·feature·contribution_pct·kpi_value를 행으로 채울 것]
 
-### 유사 과거 사례
-[각 원인의 similar_case를 bullet 리스트로, 없으면 "- 없음"]
+### 판정 요약
+[consensus.summary 내용을 2~3문장으로 정리. confidence_level 포함]
 
 ### ML 모델 SHAP 분석 (Top 3 Feature)
 > 모델: {shap.get('model', '-')}

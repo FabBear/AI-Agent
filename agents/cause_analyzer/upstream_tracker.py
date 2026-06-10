@@ -5,13 +5,14 @@ import networkx as nx
 from agents import config
 from agents.schemas.kpi import ToolGroupKPI
 
-_MAX_UPSTREAM_HOPS = 3
+_DEFAULT_MAX_HOPS = 3
 
 
 def find_upstream_suspects(
     G: nx.DiGraph,
     toolgroup: str,
     kpi_map: dict[str, ToolGroupKPI],
+    max_hops: int = _DEFAULT_MAX_HOPS,
 ) -> list[str]:
     """
     업스트림 TG 중 utilization이 높고 WIP이 많아 병목 TG로 물량을 밀어넣고 있을
@@ -27,7 +28,7 @@ def find_upstream_suspects(
 
     while queue:
         node, hop = queue.pop(0)
-        if hop >= _MAX_UPSTREAM_HOPS:
+        if hop >= max_hops:
             continue
         for upstream in G_rev.successors(node):
             if upstream in seen:

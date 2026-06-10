@@ -54,25 +54,74 @@ def print_cause_reports(reports: list[CauseReport]) -> None:
     if not reports:
         return
     print("=" * 70)
-    print("  원인 분석 결과")
+    print("  원인 분석 결과 (Evidence-based)")
     print("=" * 70)
     for r in reports:
         print(f"\n▶ {r.toolgroup}  (snapshot={r.snapshot_time:.0f}min)\n")
 
-        print("  [SHAP 기여도]")
+        # ── SHAP
+        print("  [① SHAP 기여도]")
         for s in r.shap_top:
             bar = "█" * int(abs(s.shap_value) * 30)
             sign = "+" if s.shap_value > 0 else "-"
-            print(f"    {s.feature:<25} {sign}{bar}  ({s.shap_value:+.3f}, 현재={s.kpi_value:.3f})")
+            print(f"    {s.feature:<28} {sign}{bar}  ({s.shap_value:+.3f}, 현재={s.kpi_value:.3f})")
 
-        print("\n  [KPI 트렌드]")
-        for t in r.trend_top:
-            arrow = "↑" if t.slope_per_hour > 0 else "↓"
-            print(f"    {t.feature:<25} {arrow} {t.slope_per_hour:+.4f}/h  {t.values}")
+        # ── 트렌드 (significant 표시)
+        print("\n  [② KPI 트렌드]")
+        if r.trend_top:
+            for t in r.trend_top:
+                arrow = "↑" if t.slope_per_hour > 0 else "↓"
+                sig_mark = " ★유의" if t.significant else ""
+                r2_str = f"R²={t.r2:.2f}" if t.r2 > 0 else ""
+                print(f"    {t.feature:<28} {arrow} {t.slope_per_hour:+.4f}/h  {r2_str}{sig_mark}")
+        else:
+            print("    (데이터 없음)")
 
+        # ── 업스트림
         if r.upstream_suspects:
-            print(f"\n  [업스트림 과부하]  {', '.join(r.upstream_suspects)}")
+            print(f"\n  [③ 업스트림 과부하]  {', '.join(r.upstream_suspects)}")
 
+        # ── G* T-test
+        if r.consensus.g_star_confirmed and r.consensus.g_star_sig_kpis:
+            print(f"\n  [④ G* T-test]")
+            for e in r.consensus.g_star_sig_kpis:
+                verdict = "★ 통계 확인" if e.significant else "비유의"
+                print(f"    {e.kpi:<28} Δ={e.delta_mean:+.1f}  p={e.t_p_adj:.4f}  {verdict}")
+
+        # ── Evidence 수렴 요약 (핵심 신규)
+        if r.evidence_bundle:
+            print(f"\n  [Evidence 수렴] — 4개 분석 기준 피처별 votes (●=지지, ○=미지지)")
+            for ev in r.evidence_bundle:
+                filled = "●" * ev.votes
+                empty  = "○" * (4 - ev.votes)
+                conf_label = {"HIGH": "HIGH ★", "MEDIUM": "MEDIUM", "LOW": "LOW"}.get(ev.confidence, ev.confidence)
+                sources = []
+                if ev.shap_value is not None and ev.shap_value > 0:
+                    sources.append("SHAP")
+                if ev.trend_significant:
+                    sources.append("Trend")
+                if ev.upstream_match:
+                    sources.append("Upstream")
+                if ev.g_star_significant:
+                    sources.append("G*")
+                src_str = f"  ← {', '.join(sources)}" if sources else ""
+                print(f"    {ev.feature:<28} {filled}{empty}  [{conf_label}]{src_str}")
+
+        # ── LLM 판정 결과 (핵심 신규)
+        if r.judgment:
+            j = r.judgment
+            conf_icon = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(j.primary_confidence, "")
+            print(f"\n  [LLM 판정]")
+            print(f"    {conf_icon} 주요 원인: {j.primary_cause}  [{j.primary_confidence}]")
+            print(f"    근거: {j.primary_reasoning}")
+            if j.secondary_causes:
+                print(f"    보조 원인: {', '.join(j.secondary_causes)}")
+            if j.dismissed:
+                print(f"    기각: {', '.join(j.dismissed)}")
+                if j.dismissed_reason:
+                    print(f"           → {j.dismissed_reason}")
+
+        # ── 시뮬 예측
         if r.sim_forecast:
             f = r.sim_forecast
             print(f"\n  [2시간 후 시뮬 예측]  t={f.t0:.0f} → t={f.t_future:.0f}")
@@ -88,18 +137,6 @@ def print_cause_reports(reports: list[CauseReport]) -> None:
             status = "⚠ 악화 예상" if f.gets_worse else "✓ 안정 유지"
             print(f"  {'─' * 54}")
             print(f"  전망: {status}")
-
-        if r.consensus.g_star_confirmed and r.consensus.g_star_sig_kpis:
-            print(f"\n  [G* T-test — 병목 원인 검증]  신뢰도={r.consensus.confidence_level}")
-            has_cause = any(e.significant for e in r.consensus.g_star_sig_kpis)
-            for e in r.consensus.g_star_sig_kpis:
-                if e.significant:
-                    verdict = "★ 통계적 원인 확인 (비정상 상승)"
-                else:
-                    verdict = "정상 범위 (원인 아님)"
-                print(f"    {e.kpi:<25} Δ={e.delta_mean:+.1f}  p={e.t_p_adj:.4f}  {verdict}")
-            if not has_cause:
-                print(f"    → 통계적으로 확인된 영구 원인 없음 — 일시적 과부하 가능성")
 
         print(f"\n  📝 {r.cause_summary}")
         print("─" * 70)

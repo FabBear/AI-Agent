@@ -150,7 +150,7 @@ def _call_openai(
             return client.chat.completions.create(
                 model=config.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=_MAX_TOKENS,
+                max_completion_tokens=_MAX_TOKENS,
                 temperature=config.LLM_TEMPERATURE,
             )
 
