@@ -65,22 +65,21 @@ def run_phase2(
             "comment": None,
             "rejection_reason": reason or "사유 미입력",
         }
-        print(f"[반려] token={token}  사유={approval_info['rejection_reason']}")
-        _save_rejection(token, approval_info)
-        return
-
-    approval_info = {
-        "status": "승인",
-        "approved_by": approved_by,
-        "approved_role": role,
-        "approved_at": now_str,
-        "comment": comment or "즉시 적용 승인",
-        "rejection_reason": None,
-    }
-
-    print(f"\n[Phase 2 시작] token={token}")
-    print(f"  승인자: {approved_by} ({role})")
-    print(f"  의견  : {approval_info['comment']}\n")
+        print(f"\n[Phase 2 시작 — 반려] token={token}")
+        print(f"  검토자  : {approved_by} ({role})")
+        print(f"  반려 사유: {approval_info['rejection_reason']}\n")
+    else:
+        approval_info = {
+            "status": "승인",
+            "approved_by": approved_by,
+            "approved_role": role,
+            "approved_at": now_str,
+            "comment": comment or "즉시 적용 승인",
+            "rejection_reason": None,
+        }
+        print(f"\n[Phase 2 시작 — 승인] token={token}")
+        print(f"  승인자: {approved_by} ({role})")
+        print(f"  의견  : {approval_info['comment']}\n")
 
     state = _reconstruct_state(pending, approval_info)
 
@@ -130,12 +129,6 @@ def _reconstruct_state(pending: dict, approval_info: dict) -> dict:
         "report_draft":        [],
         "report_results":      [],
     }
-
-
-def _save_rejection(token: str, approval_info: dict) -> None:
-    out_path = _PENDING_DIR / f"{token}_rejected.json"
-    out_path.write_text(json.dumps(approval_info, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[반려 저장] {out_path}")
 
 
 def main() -> None:
