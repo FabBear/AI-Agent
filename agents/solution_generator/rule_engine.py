@@ -1,7 +1,7 @@
 """
 Critical alerts 전체 → Lot Release 테이블 기반 글로벌 플랜 A / B 생성.
 
-조정 대상: release_interval_minutes, lot_priority_rule, superhotlot_enable.
+조정 대상: release_interval_minutes, superhotlot_enable.
 모든 수치는 실제 KPI 값과 cascade impact 데이터에서 역산한다.
 플랜 A / B 는 release_interval_minutes 값만 다르며, 나머지는 동일하다.
 """
@@ -24,16 +24,6 @@ _FEATURE_THRESHOLD: dict[str, float] = {
     "utilization_avg": config.U_HI,
     "available_tool_ratio": config.AVAIL_THR,
     "q_time_min": config.Q_THR,
-}
-
-# 주요 원인 피처 → 투입 우선순위 룰
-_FEATURE_TO_PRIORITY: dict[str, str] = {
-    "wip": "HIGH_WIP_FIRST",
-    "wait_ratio": "LONGEST_WAIT_FIRST",
-    "max_util": "HIGH_WIP_FIRST",
-    "utilization_avg": "HIGH_WIP_FIRST",
-    "available_tool_ratio": "PRIORITY_FIRST",
-    "q_time_min": "CRITICAL_RATIO",
 }
 
 # 수퍼핫랏 활성화 기준: Critical TG 전체 위험 lot 수 합산
@@ -70,19 +60,6 @@ def _interval_delta(cause_reports: list[CauseReport], base: float) -> float:
     return max(2.0, round(base * pct, 1))
 
 
-def _priority_rule(cause_reports: list[CauseReport]) -> str:
-    """Critical TG들의 SHAP 1위 피처 빈도로 FAB 전체 투입 우선순위 룰을 결정한다."""
-    freq: dict[str, int] = {}
-    for r in cause_reports:
-        if r.shap_top:
-            feat = r.shap_top[0].feature
-            freq[feat] = freq.get(feat, 0) + 1
-    if not freq:
-        return "HIGH_WIP_FIRST"
-    dominant = max(freq, key=lambda f: freq[f])
-    return _FEATURE_TO_PRIORITY.get(dominant, "HIGH_WIP_FIRST")
-
-
 def _superhotlot_enable(alerts: list[BottleneckAlert]) -> tuple[bool, float]:
     """위험 lot 총합이 임계값 이상이면 수퍼핫랏 활성화. (enable, total_at_risk_lots) 반환."""
     total = sum(a.impact.at_risk_lots for a in alerts)
@@ -106,7 +83,6 @@ def generate_global_plans(
     target_tgs = [a.toolgroup for a in critical_alerts]
 
     delta = _interval_delta(critical_causes, base)
-    priority = _priority_rule(critical_causes)
     superhotlot, at_risk_lots = _superhotlot_enable(critical_alerts)
 
     plans: list[GlobalSolutionPlan] = []
@@ -118,12 +94,10 @@ def generate_global_plans(
                 target_toolgroups=target_tgs,
                 current_interval_minutes=base,
                 release_interval_minutes=interval,
-                lot_priority_rule=priority,
                 superhotlot_enable=superhotlot,
                 description=(
                     f"[플랜 {plan_id}] "
                     f"Release Interval {base:.1f}분 → {interval:.1f}분 (+{interval - base:.1f}분) | "
-                    f"투입 우선순위 {priority} | "
                     f"SUPERHOTLOT {'활성화' if superhotlot else '비활성화'}"
                     f" (위험 lot {at_risk_lots:.0f}개) | "
                     f"대상 TG: {', '.join(target_tgs) if target_tgs else '없음'}"
