@@ -77,7 +77,6 @@ def _verify_candidates(
             "dispatch_rule": candidate.params.dispatch_rule,
             "superhotlot_enable": candidate.params.superhotlot_enable,
             "expected_effect": candidate.expected_effect,
-            "confidence": candidate.confidence,
         }
 
         verified.append({
@@ -158,7 +157,6 @@ def _verify_global_plans(
             "lot_priority_rule": plan.lot_priority_rule,
             "superhotlot_enable": plan.superhotlot_enable,
             "expected_effect": plan.expected_effect,
-            "confidence": plan.confidence,
         }
 
         results.append({
