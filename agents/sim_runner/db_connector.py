@@ -12,7 +12,7 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 # Simulation DB — default matches Simulation/docker-compose.yml
 _SIM_DB_URL = os.getenv(
     "SIM_DATABASE_URL",
-    "postgresql+psycopg://postgres:postgres@localhost:5432/postgres",
+    "postgresql+psycopg://fabbear_user:fabbear_pw@localhost:5432/fabbear",
 )
 # Schema where Simulation ORM tables live (matches Simulation/simulation/schema_config.py)
 _SIM_SCHEMA = os.getenv("POSTGRES_SCHEMA", "simulation")
