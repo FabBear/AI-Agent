@@ -83,7 +83,7 @@ MIN_DELTA_AVAIL: float = 0.02
 #   reversibility : 되돌리기 난이도 — high(쉬움) / medium / low(어려움)
 #   description_ko: 한국어 라벨
 # 현재 solution_generator가 만드는 건 DISPATCH_RULE_OVERRIDE만 (action_mapper.py).
-# 나머지 3개(LOT_HOLD/SET_SUPER_HOT/REQUEUE_TOOL)는 향후 확장 대비.
+# LOT_HOLD/SET_SUPER_HOT은 FabEnv 지원 — 향후 확장 대비.
 ACTION_KIND_METADATA: dict[str, dict] = {
     "LOT_HOLD": {
         "effort": 1,
@@ -96,12 +96,6 @@ ACTION_KIND_METADATA: dict[str, dict] = {
         "scope": "single_lot",
         "reversibility": "high",
         "description_ko": "단일 lot 우선처리 지정",
-    },
-    "REQUEUE_TOOL": {
-        "effort": 3,
-        "scope": "tool_local",
-        "reversibility": "medium",
-        "description_ko": "tool 큐 재할당",
     },
     "DISPATCH_RULE_OVERRIDE": {
         "effort": 4,
