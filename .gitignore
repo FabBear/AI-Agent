@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 
+# Personal .md
+CLAUDE.md
+personal_docs/
+
 # Logs
 logs/
 *.log
