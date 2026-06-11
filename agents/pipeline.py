@@ -51,7 +51,7 @@ def _read_run_id(csv_dir: Path) -> str:
 
 
 def _no_alerts(state: PipelineState) -> str:
-    return END if not state["alerts"] else "g_star"
+    return END if not state["alerts"] else "emit1"
 
 
 def _run_g_star(state: PipelineState) -> PipelineState:
