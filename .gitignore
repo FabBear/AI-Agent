@@ -74,6 +74,7 @@ tmp/
 temp/
 compare_agent_out/
 report_agent_out/
+stage_out/
 hitl_pending/
 
 # ML / Model artifacts

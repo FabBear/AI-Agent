@@ -19,7 +19,7 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 _BACKEND_DB_URL = os.getenv(
     "BACKEND_DATABASE_URL",
-    "postgresql+psycopg://fabbear_user:fabbear_pw@localhost:5432/fabbear",
+    "postgresql+psycopg://fabbear_user@localhost:5432/fabbear",
 )
 
 _engine = None

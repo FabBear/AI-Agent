@@ -42,44 +42,54 @@ class GStarKpiResult(BaseModel):
 
 
 class FeatureEvidence(BaseModel):
-    """4개 분석에서 하나의 피처에 대한 모든 증거를 집계한 번들."""
+    """4개 분석에서 하나의 피처에 대한 증거 번들."""
 
     feature: str
-    votes: int  # 0~4: 몇 개 분석이 이 피처를 병목 원인으로 지목했나
+    votes: int = 0
+    score: float = 0.0  # 가중 종합 점수 (SHAP비중 + 트렌드R² + G* + 업스트림)
 
-    # SHAP
     shap_rank: int | None = None
     shap_value: float | None = None
 
-    # 트렌드
     trend_slope: float | None = None
     trend_r2: float | None = None
     trend_significant: bool = False
 
-    # 업스트림 (capacity/flow 피처에만 적용)
     upstream_match: bool = False
 
-    # G* t-test
     g_star_p_value: float | None = None
     g_star_significant: bool = False
 
     confidence: Literal["HIGH", "MEDIUM", "LOW"] = "LOW"
 
 
-class CauseJudgment(BaseModel):
-    """LLM 판정 에이전트의 최종 원인 판정 결과."""
+class CauseCategory(BaseModel):
+    """여러 관련 피처를 묶어 하나의 원인 카테고리로 집계한 결과."""
 
-    primary_cause: str
+    name: str                       # "설비_포화", "대기_누적", "WIP_누적", "공급_부족"
+    features: list[str]             # 포함된 피처 목록
+    shap_share_pct: float           # 전체 양수 SHAP 중 이 카테고리 비율 (%)
+    n_trend_significant: int        # 유의미 트렌드 피처 수
+    upstream_match: bool
+    g_star_confirmed: bool
+    total_score: float              # 종합 점수 (랭킹 기준)
+    confidence: Literal["HIGH", "MEDIUM", "LOW"]
+
+
+class CauseJudgment(BaseModel):
+    """LLM 판정 에이전트의 최종 원인 판정."""
+
+    primary_category: str = ""     # 주요 원인 카테고리 ("설비_포화" 등)
+    primary_cause: str             # 카테고리 내 대표 피처
     primary_confidence: Literal["HIGH", "MEDIUM", "LOW"]
     primary_reasoning: str
 
-    secondary_causes: list[str] = []
-    dismissed: list[str] = []
+    secondary_causes: list[str] = []   # 보조 카테고리 또는 피처
+    dismissed: list[str] = []          # 기각된 카테고리
     dismissed_reason: str = ""
 
-    needs_more_data: bool = False  # True면 더 긴 window로 재시도
-
-    cause_summary: str  # [주요 원인] / [악화 추세] / [업스트림] / [2시간 전망]
+    needs_more_data: bool = False
+    cause_summary: str
 
 
 class ConsensusResult(BaseModel):
@@ -107,5 +117,6 @@ class CauseReport(BaseModel):
     sim_forecast: SimForecast | None
     consensus: ConsensusResult
     evidence_bundle: list[FeatureEvidence] = []
+    cause_categories: list[CauseCategory] = []
     judgment: CauseJudgment | None = None
     cause_summary: str

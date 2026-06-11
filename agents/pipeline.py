@@ -13,6 +13,7 @@ from agents.cascade_analyzer.node import analyze_cascade
 from agents.cause_analyzer.node import analyze_cause
 from agents.logger import get_logger
 from agents.solution_generator.node import generate_solutions
+from agents.stage_writer import emit_stage1, emit_stage2
 from agents.verification_agent.node import verify_solutions
 from agents.compare_agent.node import compare_rank, compare_llm, compare_hitl
 from agents.report_agent.node import (
@@ -152,10 +153,12 @@ def build_pipeline(
     g.add_node("detect", detect_bottlenecks)
     # Agent 2: 확산 영향
     g.add_node("cascade", analyze_cascade)
+    g.add_node("emit1", emit_stage1)          # Stage 1 JSON 저장
     # G* 분석 (cascade 이후, cause 이전)
     g.add_node("g_star", _run_g_star if run_g_star else lambda s: s)
     # Agent 3: 원인 분석 + 대응안 생성
     g.add_node("cause", functools.partial(analyze_cause, run_sim=run_sim))
+    g.add_node("emit2", emit_stage2)          # Stage 2 JSON 저장
     g.add_node("solution", generate_solutions)
     # Agent 4: 대응안 효과 검증
     g.add_node("verify", verify_solutions)
@@ -169,9 +172,11 @@ def build_pipeline(
         g.add_edge("detect", "cascade")
     else:
         g.set_entry_point("cascade")
-    g.add_conditional_edges("cascade", _no_alerts, {"g_star": "g_star", END: END})
+    g.add_conditional_edges("cascade", _no_alerts, {"emit1": "emit1", END: END})
+    g.add_edge("emit1",    "g_star")
     g.add_edge("g_star",   "cause")
-    g.add_edge("cause",    "solution")
+    g.add_edge("cause",    "emit2")
+    g.add_edge("emit2",    "solution")
     g.add_edge("solution", "verify")
     g.add_edge("verify",       "compare_rank")
     g.add_edge("compare_rank", "compare_llm")

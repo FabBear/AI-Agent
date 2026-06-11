@@ -88,31 +88,31 @@ def print_cause_reports(reports: list[CauseReport]) -> None:
                 verdict = "★ 통계 확인" if e.significant else "비유의"
                 print(f"    {e.kpi:<28} Δ={e.delta_mean:+.1f}  p={e.t_p_adj:.4f}  {verdict}")
 
-        # ── Evidence 수렴 요약 (핵심 신규)
-        if r.evidence_bundle:
-            print(f"\n  [Evidence 수렴] — 4개 분석 기준 피처별 votes (●=지지, ○=미지지)")
-            for ev in r.evidence_bundle:
-                filled = "●" * ev.votes
-                empty  = "○" * (4 - ev.votes)
-                conf_label = {"HIGH": "HIGH ★", "MEDIUM": "MEDIUM", "LOW": "LOW"}.get(ev.confidence, ev.confidence)
-                sources = []
-                if ev.shap_value is not None and ev.shap_value > 0:
-                    sources.append("SHAP")
-                if ev.trend_significant:
-                    sources.append("Trend")
-                if ev.upstream_match:
-                    sources.append("Upstream")
-                if ev.g_star_significant:
-                    sources.append("G*")
-                src_str = f"  ← {', '.join(sources)}" if sources else ""
-                print(f"    {ev.feature:<28} {filled}{empty}  [{conf_label}]{src_str}")
+        # ── 카테고리 수렴 (핵심 신규)
+        if r.cause_categories:
+            print(f"\n  [카테고리 수렴 분석] — 4가지 분석 종합 (score 순)")
+            bar_max = max((c.total_score for c in r.cause_categories), default=1.0) or 1.0
+            for cat in r.cause_categories:
+                bar_len = int(cat.total_score / bar_max * 20)
+                bar = "█" * bar_len + "░" * (20 - bar_len)
+                trend_str = f"Trend★={cat.n_trend_significant}" if cat.n_trend_significant else "Trend=0"
+                g_str = "G*=확인" if cat.g_star_confirmed else "G*=✗"
+                ups_str = "Up=있음" if cat.upstream_match else ""
+                extras = " | ".join(filter(None, [trend_str, g_str, ups_str]))
+                conf_icon = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(cat.confidence, "")
+                print(
+                    f"    {cat.name:<10} {bar}  "
+                    f"SHAP={cat.shap_share_pct:5.1f}%  {extras:<30}  "
+                    f"score={cat.total_score:.3f}  {conf_icon}[{cat.confidence}]"
+                )
 
         # ── LLM 판정 결과 (핵심 신규)
         if r.judgment:
             j = r.judgment
             conf_icon = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(j.primary_confidence, "")
             print(f"\n  [LLM 판정]")
-            print(f"    {conf_icon} 주요 원인: {j.primary_cause}  [{j.primary_confidence}]")
+            cat_str = f"  ({j.primary_category})" if j.primary_category else ""
+            print(f"    {conf_icon} 주요 원인: {j.primary_cause}{cat_str}  [{j.primary_confidence}]")
             print(f"    근거: {j.primary_reasoning}")
             if j.secondary_causes:
                 print(f"    보조 원인: {', '.join(j.secondary_causes)}")
