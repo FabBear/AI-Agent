@@ -178,11 +178,11 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
         "recommendation": compare_result.get("recommendation", {}),
         "approval_info": compare_result.get("approval_info", {}),
         "section_header": "",
+        "section_review": "",
         "section_summary": "",
         "section_diffusion": "",
         "section_cause": "",
         "section_actions": "",
-        "section_approval": "",
     }
 
 
@@ -243,26 +243,25 @@ def report_prepare(state: "PipelineState") -> dict:
         )
 
         ai = item.get("approval_info") or {}
-        item_detected_at = item["detected_at"]
         if ai.get("status") == "반려":
-            item["section_approval"] = (
-                f"## 5. 승인 정보\n\n"
+            item["section_review"] = (
+                f"## 검토 결과\n\n"
                 f"| 항목 | 내용 |\n|------|------|\n"
-                f"| 탐지시각 | {item_detected_at} |\n"
-                f"| 검토자 | {ai.get('approved_by', '-')} ({ai.get('approved_role', '-')}) |\n"
-                f"| 상태 | 반려 |\n"
+                f"| 상태 | **🔴 반려** |\n"
+                f"| 검토자 | {ai.get('approved_by') or '-'} ({ai.get('approved_role') or '-'}) |\n"
                 f"| 반려일시 | {ai.get('approved_at', '-')} |\n"
-                f"| 반려 사유 | {ai.get('rejection_reason', '-')} |"
+                f"| 반려 사유 | {ai.get('rejection_reason', '-')} |\n\n"
+                f"---"
             )
         else:
-            item["section_approval"] = (
-                f"## 5. 승인 정보\n\n"
+            item["section_review"] = (
+                f"## 검토 결과\n\n"
                 f"| 항목 | 내용 |\n|------|------|\n"
-                f"| 탐지시각 | {item_detected_at} |\n"
-                f"| 승인자 | {ai.get('approved_by', '-')} ({ai.get('approved_role', '-')}) |\n"
-                f"| 상태 | 승인 |\n"
+                f"| 상태 | **🟢 승인** |\n"
+                f"| 승인자 | {ai.get('approved_by') or '-'} ({ai.get('approved_role') or '-'}) |\n"
                 f"| 승인일시 | {ai.get('approved_at', '-')} |\n"
-                f"| 의견 | {ai.get('comment', '-')} |"
+                f"| 의견 | {ai.get('comment') or '-'} |\n\n"
+                f"---"
             )
 
         report_draft.append(item)
@@ -347,11 +346,11 @@ def report_save(state: "PipelineState") -> dict:
         tg = item["toolgroup"]
         sections = [
             item.get("section_header", ""),
+            item.get("section_review", ""),
             item.get("section_summary", ""),
             item.get("section_diffusion", ""),
             item.get("section_cause", ""),
             item.get("section_actions", ""),
-            item.get("section_approval", ""),
         ]
         final_report = "\n\n".join(s for s in sections if s)
 

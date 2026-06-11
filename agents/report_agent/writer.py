@@ -66,11 +66,11 @@ class ReportState(TypedDict):
 
     # ── 생성된 섹션 ──
     section_header: str
+    section_review: str
     section_summary: str
     section_diffusion: str
     section_cause: str
     section_actions: str
-    section_approval: str
 
     # ── 최종 출력 ──
     final_report: str
