@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -5,6 +7,7 @@ class SimParamDelta(BaseModel):
     """WHATIF 시뮬레이션에 적용할 파라미터 변화량."""
 
     release_interval_delta_pct: float | None = None
+    priority_direction: Literal["UP", "DOWN"] | None = None
     lot_priority_rule: str | None = None
     dispatch_rule: str | None = None
     superhotlot_enable: bool = False
@@ -31,7 +34,7 @@ class GlobalSolutionPlan(BaseModel):
     target_toolgroups: list[str]  # 이번 플랜의 대상 Critical TG 목록
     current_interval_minutes: float  # 현재 인터벌 (참고용)
     release_interval_minutes: float  # 목표 Lot Release Interval (분) — 시뮬 입력 절댓값
-    lot_priority_rule: str | None  # 투입 우선순위 룰 (HIGH_WIP_FIRST 등)
+    lot_priority_rule: str | None = None  # 투입 우선순위 룰 (HIGH_WIP_FIRST 등)
     superhotlot_enable: bool  # 긴급 lot 플래그 활성화
     description: str
     expected_effect: str
