@@ -26,7 +26,7 @@ def get_session():
     if _engine is None:
         connect_args: dict = {}
         if _SIM_SCHEMA and _SIM_SCHEMA != "public":
-            connect_args["options"] = f"-csearch_path={_SIM_SCHEMA},public"
+            connect_args["options"] = f'-csearch_path="{_SIM_SCHEMA}",public'
         _engine = create_engine(_SIM_DB_URL, pool_pre_ping=True, connect_args=connect_args)
         _Session = sessionmaker(bind=_engine)
     return _Session()
