@@ -1,17 +1,13 @@
 [
-  "snapshot_time",
   "available_tool_ratio",
   "q_time_min",
   "wait_ratio",
   "wip",
-  "setup_ratio_avg",
   "utilization_avg",
-  "max_avg_q_time",
   "max_util",
   "q_time_min_delta_120",
   "wait_ratio_delta_120",
   "wip_delta_120",
   "max_util_delta_120",
-  "utilization_avg_delta_120",
-  "toolgroup_enc"
+  "utilization_avg_delta_120"
 ]

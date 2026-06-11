@@ -129,8 +129,36 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
                 "summary": c.summary,
             }
 
+        categories_list = [
+            {
+                "name": cat.name,
+                "features": cat.features,
+                "shap_share_pct": cat.shap_share_pct,
+                "n_trend_significant": cat.n_trend_significant,
+                "upstream_match": cat.upstream_match,
+                "g_star_confirmed": cat.g_star_confirmed,
+                "total_score": cat.total_score,
+                "confidence": cat.confidence,
+            }
+            for cat in (cause_report.cause_categories or [])
+        ]
+
+        judgment_dict: dict | None = None
+        if cause_report.judgment:
+            j = cause_report.judgment
+            judgment_dict = {
+                "primary_category": j.primary_category,
+                "primary_cause": j.primary_cause,
+                "primary_confidence": j.primary_confidence,
+                "primary_reasoning": j.primary_reasoning,
+                "secondary_causes": j.secondary_causes,
+                "dismissed": j.dismissed,
+            }
+
         cause_analysis = {
             "shap_top": shap_top,
+            "categories": categories_list,
+            "judgment": judgment_dict,
             "summary": cause_report.cause_summary or "",
             "consensus": consensus_dict,
         }

@@ -1,8 +1,8 @@
-"""LLM 원인 판정 에이전트: evidence_bundle → CauseJudgment.
+"""LLM 원인 판정 에이전트: categories + evidence_bundle → CauseJudgment.
 
-LLM은 4개 분석의 수렴 증거를 받아 primary cause를 판정한다.
-SHAP 1위라도 다른 분석이 반박하면 기각 가능.
-evidence가 불충분하면 needs_more_data=True로 재시도를 요청한다.
+카테고리 단위로 수렴 증거를 집계한 뒤 LLM이 판정한다.
+SHAP 1위 피처라도 카테고리 total_score가 낮으면 기각 가능.
+needs_more_data=True 반환 시 window 확장 후 재시도.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from agents import config
 from agents.cause_analyzer.g_star_loader import GStarResult
 from agents.logger import get_logger
-from agents.schemas.cause import CauseJudgment, FeatureEvidence, SimForecast
+from agents.schemas.cause import CauseCategory, CauseJudgment, FeatureEvidence, SimForecast
 from agents.token_tracker import record as _record_tokens
 
 _log = get_logger(__name__)
@@ -26,71 +26,95 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 _MAX_TOKENS = 1000
 
 _SYSTEM = """당신은 반도체 FAB 병목 원인 판정 전문가입니다.
-SHAP, 트렌드, 업스트림, G* 4가지 분석의 수렴 증거를 보고 실제 root cause를 판정합니다.
+카테고리별 수렴 증거를 보고 실제 root cause 카테고리를 판정합니다.
 반드시 한국어로 답하고, 요청한 JSON 형식만 출력하세요."""
 
 
 def _build_prompt(
     toolgroup: str,
     evidence_bundle: list[FeatureEvidence],
+    categories: list[CauseCategory],
     upstream_suspects: list[str],
     sim_forecast: SimForecast | None,
     g_star: GStarResult | None,
     retry_n: int,
 ) -> str:
-    retry_note = f"\n※ 재시도 #{retry_n} — 더 긴 window 데이터가 추가되었습니다.\n" if retry_n > 0 else ""
+    retry_note = f"\n※ 재시도 #{retry_n} — 더 긴 window 데이터 반영됨.\n" if retry_n > 0 else ""
 
-    evidence_lines = []
-    for ev in evidence_bundle:
-        parts = [f"  {ev.feature} | votes={ev.votes} | confidence={ev.confidence}"]
-        if ev.shap_rank is not None:
-            direction = "↑병목" if (ev.shap_value or 0) > 0 else "↓완화"
-            parts.append(f"    SHAP: rank={ev.shap_rank}, value={ev.shap_value:+.4f} ({direction})")
-        if ev.trend_slope is not None:
-            sig = "★유의" if ev.trend_significant else "미유의"
-            parts.append(f"    트렌드: slope={ev.trend_slope:+.4f}/h, R²={ev.trend_r2:.3f} [{sig}]")
-        if ev.upstream_match:
-            parts.append(f"    업스트림: capacity 피처 해당 (과부하 TG: {', '.join(upstream_suspects[:3])})")
-        if ev.g_star_p_value is not None:
-            sig = "★통계유의" if ev.g_star_significant else "비유의"
-            parts.append(f"    G* t-test: p={ev.g_star_p_value:.4f} [{sig}]")
-        evidence_lines.append("\n".join(parts))
+    # 카테고리 섹션 (핵심 판정 근거)
+    cat_lines = []
+    symbols = "①②③④⑤⑥"
+    feat_map = {e.feature: e for e in evidence_bundle}
 
-    evidence_text = "\n".join(evidence_lines) if evidence_lines else "  (증거 없음)"
+    for i, cat in enumerate(categories):
+        sym = symbols[i] if i < len(symbols) else f"({i+1})"
+        extras = []
+        if cat.n_trend_significant:
+            extras.append(f"트렌드유의={cat.n_trend_significant}개")
+        extras.append("G*=확인" if cat.g_star_confirmed else "G*=미확인")
+        if cat.upstream_match:
+            extras.append("업스트림=있음")
+
+        feat_details = []
+        for fn in cat.features:
+            ev = feat_map.get(fn)
+            if not ev:
+                continue
+            parts = []
+            if ev.shap_value is not None:
+                d = "↑병목" if ev.shap_value > 0 else "↓완화"
+                parts.append(f"SHAP{ev.shap_value:+.3f}{d}")
+            if ev.trend_significant and ev.trend_slope is not None:
+                parts.append(f"Trend★{ev.trend_slope:+.3f}/h")
+            if ev.g_star_significant:
+                parts.append(f"G*(p={ev.g_star_p_value:.3f})")
+            if parts:
+                feat_details.append(f"{fn}({', '.join(parts)})")
+
+        feat_str = "  피처: " + " / ".join(feat_details) if feat_details else ""
+        cat_lines.append(
+            f"  {sym} {cat.name}  SHAP기여={cat.shap_share_pct:.1f}%  "
+            f"{' | '.join(extras)}  score={cat.total_score:.3f}  [{cat.confidence}]\n"
+            + (f"  {feat_str}" if feat_str else "")
+        )
+
+    cat_text = "\n".join(cat_lines) if cat_lines else "  (분류 없음)"
 
     forecast_text = ""
     if sim_forecast:
         lines = [
-            f"  {kpi}: {c.now:.3f} → {c.future:.3f} ({c.pct_change:+.1f}%)"
+            f"  {kpi}: {c.now:.2f}→{c.future:.2f} ({c.pct_change:+.1f}%)"
             for kpi, c in sim_forecast.kpi_delta.items()
         ]
-        forecast_text = "\n[2시간 후 시뮬레이션 예측]\n" + "\n".join(lines)
+        forecast_text = "\n[2시간 예측]\n" + "\n".join(lines)
 
     g_star_text = ""
     if g_star:
         confirmed = toolgroup in (g_star.toolgroups or [])
-        g_star_text = f"\n[G* 분석] TG 포함여부: {'포함(통계 확인)' if confirmed else '미포함'}"
+        g_star_text = f"\n[G* TG 포함]: {'포함(통계 확인)' if confirmed else '미포함'}"
 
-    return f"""반도체 FAB '{toolgroup}' 공정의 병목 원인을 아래 증거를 토대로 판정하세요.
+    return f"""반도체 FAB '{toolgroup}' 공정 병목 원인 판정.
 {retry_note}
-[피처별 4가지 분석 증거] (votes=0~4, HIGH≥3, MEDIUM=2, LOW≤1)
-{evidence_text}
+[카테고리별 원인 수렴 분석] — 판정의 핵심 근거
+{cat_text}
 {forecast_text}
 {g_star_text}
 
-판정 규칙:
-1. votes가 가장 높은 피처를 primary_cause로 선택하세요.
-2. SHAP 1위라도 다른 3개 분석이 모두 반박하면 기각하고 dismissed에 추가하세요.
-3. votes≤1이고 증거가 불명확하면 needs_more_data=true로 설정하세요.
-4. cause_summary는 [주요 원인] / [악화 추세] / [업스트림(있을때)] / [2시간 전망(있을때)] 형식으로 작성하세요.
+판정 기준:
+1. total_score 가장 높은 카테고리 → primary_category
+2. SHAP기여율 50% 이상이면 score 낮아도 우선 고려
+3. G* 확인 카테고리 → score 관계없이 최우선
+4. 1·2위 score 차이 < 0.15이고 최고 score < 0.4 → needs_more_data=true
+5. cause_summary: [주요 원인] / [악화 추세] / [업스트림(있을때)] / [2시간 전망(있을때)]
 
 반드시 아래 JSON만 출력하세요:
 {{
-  "primary_cause": "피처명",
+  "primary_category": "카테고리명",
+  "primary_cause": "카테고리 내 대표 피처명 (SHAP 기여 가장 큰 것)",
   "primary_confidence": "HIGH|MEDIUM|LOW",
-  "primary_reasoning": "왜 이 피처가 primary인지 1~2문장",
-  "secondary_causes": ["피처명", ...],
-  "dismissed": ["피처명", ...],
+  "primary_reasoning": "판정 근거 1~2문장 (수치 포함)",
+  "secondary_causes": ["보조 카테고리명"],
+  "dismissed": ["기각 카테고리명"],
   "dismissed_reason": "기각 이유 (없으면 빈 문자열)",
   "needs_more_data": false,
   "cause_summary": "[주요 원인] ... [악화 추세] ..."
@@ -100,6 +124,7 @@ def _build_prompt(
 def judge(
     toolgroup: str,
     evidence_bundle: list[FeatureEvidence],
+    categories: list[CauseCategory],
     upstream_suspects: list[str],
     sim_forecast: SimForecast | None = None,
     g_star: GStarResult | None = None,
@@ -107,25 +132,31 @@ def judge(
 ) -> CauseJudgment:
     api_key = os.getenv("OPENAI_API_KEY", "")
     if api_key and not api_key.startswith("your_"):
-        result = _call_openai(toolgroup, evidence_bundle, upstream_suspects, sim_forecast, g_star, retry_n, api_key)
+        result = _call_openai(
+            toolgroup, evidence_bundle, categories,
+            upstream_suspects, sim_forecast, g_star, retry_n, api_key,
+        )
         if result:
             return result
-    return _rule_based_judgment(toolgroup, evidence_bundle, upstream_suspects, sim_forecast)
+    return _rule_based_judgment(toolgroup, evidence_bundle, categories, upstream_suspects, sim_forecast)
 
 
 def _call_openai(
     toolgroup: str,
     evidence_bundle: list[FeatureEvidence],
+    categories: list[CauseCategory],
     upstream_suspects: list[str],
     sim_forecast: SimForecast | None,
     g_star: GStarResult | None,
     retry_n: int,
     api_key: str,
 ) -> CauseJudgment | None:
-    prompt = _build_prompt(toolgroup, evidence_bundle, upstream_suspects, sim_forecast, g_star, retry_n)
+    prompt = _build_prompt(
+        toolgroup, evidence_bundle, categories,
+        upstream_suspects, sim_forecast, g_star, retry_n,
+    )
     try:
         from openai import APIError, OpenAI, RateLimitError
-
         client = OpenAI(api_key=api_key)
 
         @retry(
@@ -152,9 +183,10 @@ def _call_openai(
 
         raw = response.choices[0].message.content or ""
         data = json.loads(raw)
-        raw_confidence = str(data.get("primary_confidence", "LOW")).upper()
-        confidence = raw_confidence if raw_confidence in ("HIGH", "MEDIUM", "LOW") else "LOW"
+        raw_conf = str(data.get("primary_confidence", "LOW")).upper()
+        confidence = raw_conf if raw_conf in ("HIGH", "MEDIUM", "LOW") else "LOW"
         return CauseJudgment(
+            primary_category=str(data.get("primary_category", "")),
             primary_cause=str(data.get("primary_cause", "")),
             primary_confidence=confidence,
             primary_reasoning=str(data.get("primary_reasoning", "")),
@@ -172,47 +204,64 @@ def _call_openai(
 def _rule_based_judgment(
     toolgroup: str,
     evidence_bundle: list[FeatureEvidence],
+    categories: list[CauseCategory],
     upstream_suspects: list[str],
     sim_forecast: SimForecast | None,
 ) -> CauseJudgment:
-    if not evidence_bundle:
+    if not categories:
+        top_feat = evidence_bundle[0] if evidence_bundle else None
         return CauseJudgment(
-            primary_cause="unknown",
+            primary_category="",
+            primary_cause=top_feat.feature if top_feat else "unknown",
             primary_confidence="LOW",
-            primary_reasoning="분석 데이터 없음",
+            primary_reasoning="카테고리 분류 불가, 최고 score 피처로 대체",
             needs_more_data=True,
-            cause_summary=f"{toolgroup}: 데이터 부족으로 원인 판정 불가",
+            cause_summary=f"{toolgroup}: 분석 데이터 불충분",
         )
 
-    top = evidence_bundle[0]
-    secondary = [e.feature for e in evidence_bundle[1:] if e.votes >= 1]
-    dismissed = [e.feature for e in evidence_bundle if e.votes == 0 and e.shap_rank is not None and e.shap_rank <= 2]
+    top = categories[0]
 
-    needs_more = top.votes <= 1 and top.confidence == "LOW"
-
-    parts = []
-    direction = "상승" if (top.shap_value or 0) > 0 else "하락"
-    parts.append(
-        f"[주요 원인] {top.feature} (votes={top.votes}, confidence={top.confidence}) — "
-        f"SHAP {(top.shap_value or 0):+.3f}, {direction}하며 병목 기여."
+    # 카테고리 내 대표 피처: SHAP 기여 가장 큰 양수 피처
+    feat_map = {e.feature: e for e in evidence_bundle}
+    cat_evs = sorted(
+        [feat_map[f] for f in top.features if f in feat_map and (feat_map[f].shap_value or 0) > 0],
+        key=lambda e: -(e.shap_value or 0),
     )
-    trend_sig = [e for e in evidence_bundle if e.trend_significant]
-    if trend_sig:
-        worst = trend_sig[0]
-        parts.append(f"[악화 추세] {worst.feature}: {(worst.trend_slope or 0):+.4f}/h (R²={worst.trend_r2:.2f})")
+    primary_feature = cat_evs[0].feature if cat_evs else (top.features[0] if top.features else "unknown")
+
+    secondary = [c.name for c in categories[1:] if c.total_score > 0.1]
+    dismissed = [c.name for c in categories if c.total_score <= 0.05]
+
+    # 1·2위 score 차이 작고 전반적 score 낮으면 추가 데이터 요청
+    needs_more = (
+        len(categories) >= 2
+        and abs(categories[0].total_score - categories[1].total_score) < 0.15
+        and top.confidence == "LOW"
+    )
+
+    parts = [
+        f"[주요 원인] {top.name} — SHAP 기여율 {top.shap_share_pct:.1f}%, score={top.total_score:.3f} [{top.confidence}]"
+    ]
+    if top.n_trend_significant:
+        trend_feats = [f for f in top.features if feat_map.get(f) and feat_map[f].trend_significant]
+        parts.append(f"[악화 추세] {', '.join(trend_feats)} 유의미 상승 추세")
     if upstream_suspects:
-        parts.append(f"[업스트림] 과부하 TG: {', '.join(upstream_suspects[:2])}")
+        parts.append(f"[업스트림] {', '.join(upstream_suspects[:2])} 과부하가 {top.name}에 영향")
     if sim_forecast and sim_forecast.gets_worse:
-        worst_kpi = max(sim_forecast.kpi_delta.items(), key=lambda x: abs(x[1].pct_change))
-        parts.append(f"[2시간 전망] {worst_kpi[0]} {worst_kpi[1].pct_change:+.1f}% 악화 예측")
+        worst = max(sim_forecast.kpi_delta.items(), key=lambda x: abs(x[1].pct_change))
+        parts.append(f"[2시간 전망] {worst[0]} {worst[1].pct_change:+.1f}% 변화 예측")
 
     return CauseJudgment(
-        primary_cause=top.feature,
+        primary_category=top.name,
+        primary_cause=primary_feature,
         primary_confidence=top.confidence,
-        primary_reasoning=f"votes={top.votes}으로 4개 분석 중 가장 많은 지지. confidence={top.confidence}.",
+        primary_reasoning=(
+            f"{top.name} 카테고리가 SHAP {top.shap_share_pct:.1f}% 기여로 가장 높음 "
+            f"(score={top.total_score:.3f})."
+        ),
         secondary_causes=secondary,
         dismissed=dismissed,
-        dismissed_reason="SHAP 기여 있으나 트렌드·G* 미확인" if dismissed else "",
+        dismissed_reason="SHAP 기여율 및 추가 증거 부족" if dismissed else "",
         needs_more_data=needs_more,
         cause_summary=" ".join(parts),
     )

@@ -103,14 +103,15 @@ def analyze_cause(
         # ── 4. 트렌드 + Evidence Aggregation + LLM Judge (재시도 루프)
         trend_top = get_trend_top(window, tg, top_n=3)
         evidence_bundle = []
+        categories = []
         judgment = None
 
         for retry_n in range(_MAX_RETRIES + 1):
-            evidence_bundle = aggregate_evidence(
+            evidence_bundle, categories = aggregate_evidence(
                 shap_top, trend_top, upstream_suspects, tg_g_star_evidence
             )
             judgment = judge(
-                tg, evidence_bundle, upstream_suspects,
+                tg, evidence_bundle, categories, upstream_suspects,
                 g_star=g_star,
                 retry_n=retry_n,
             )
@@ -191,6 +192,7 @@ def analyze_cause(
                 sim_forecast=sim_forecast,
                 consensus=consensus,
                 evidence_bundle=evidence_bundle,
+                cause_categories=categories,
                 judgment=judgment,
                 cause_summary=judgment.cause_summary,
             )
