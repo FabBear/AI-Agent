@@ -35,7 +35,6 @@ def _build_prompt(
 
 [Lot Release 테이블 조정안 — 플랜 {plan.plan_id}]
 - Release Interval: {plan.release_interval_minutes:.1f}분
-- 투입 우선순위: {plan.lot_priority_rule or "변경 없음"}
 - SUPERHOTLOT: {"활성화" if plan.superhotlot_enable else "비활성화"}
 
 Critical 병목 TG 및 원인 요약:
