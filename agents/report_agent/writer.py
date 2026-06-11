@@ -298,8 +298,7 @@ def write_actions(state: ReportState) -> dict:
     decision_caveat = decision_info.get("decision_caveat", "")
     equivalent_set = decision_info.get("equivalent_set", [])
 
-    # LLM이 활용할 구조화 추천 (compare_agent의 recommendation.structured)
-    structured = rec.get("structured", {}) or {}
+    structured = rec
 
     if is_rejected:
         rejection_reason = ai.get("rejection_reason", "-")
