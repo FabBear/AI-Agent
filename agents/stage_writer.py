@@ -2,7 +2,6 @@
 
 Stage 1: cascade 완료 → stage1_alert_t{t}.json
 Stage 2: cause 완료   → stage2_cause_t{t}.json
-Stage 3: compare 완료 → stage3_action_t{t}.json
 """
 
 from __future__ import annotations
