@@ -70,6 +70,15 @@ def _verify_candidates(
         # target KPI 기준 주요 통계
         target_stats = kpi_stats.get(candidate.target_kpi, {})
 
+        params_meta = {
+            "target_toolgroups": [alert.toolgroup],
+            "release_interval_delta_pct": candidate.params.release_interval_delta_pct,
+            "lot_priority_rule": candidate.params.lot_priority_rule,
+            "dispatch_rule": candidate.params.dispatch_rule,
+            "superhotlot_enable": candidate.params.superhotlot_enable,
+            "expected_effect": candidate.expected_effect,
+        }
+
         verified.append({
             "rank": rank,
             "label": label,
@@ -83,6 +92,7 @@ def _verify_candidates(
             "target_kpi_stats": target_stats,
             "verdict": target_stats.get("verdict", "unknown"),
             "paired_t_p": target_stats.get("paired_t_p"),
+            "plan_meta": params_meta,
         })
 
     return verified
@@ -137,6 +147,18 @@ def _verify_global_plans(
 
         target_stats = kpi_stats.get("q_time_min", {})
 
+        plan_meta = {
+            "target_toolgroups": list(plan.target_toolgroups),
+            "release_interval_minutes": plan.release_interval_minutes,
+            "current_interval_minutes": plan.current_interval_minutes,
+            "release_interval_delta_min": round(
+                plan.release_interval_minutes - plan.current_interval_minutes, 4
+            ),
+            "lot_priority_rule": plan.lot_priority_rule,
+            "superhotlot_enable": plan.superhotlot_enable,
+            "expected_effect": plan.expected_effect,
+        }
+
         results.append({
             "plan_id": plan.plan_id,
             "target_toolgroups": plan.target_toolgroups,
@@ -154,6 +176,7 @@ def _verify_global_plans(
                 "target_kpi_stats": target_stats,
                 "verdict": target_stats.get("verdict", "unknown"),
                 "paired_t_p": target_stats.get("paired_t_p"),
+                "plan_meta": plan_meta,
             }],
         })
 

@@ -41,3 +41,72 @@ MEDIUM_SCORE: float = 0.35
 import os as _os
 LLM_MODEL: str = _os.getenv("LLM_MODEL", "gpt-5.4-mini")
 LLM_TEMPERATURE: float = float(_os.getenv("LLM_TEMPERATURE", "0.2"))
+
+# ── 비교분석 Agent (compare_agent) ────────────────────────────────────
+# 5개 KPI 방향 — 도메인 합의 사항. 병목 TG 관점:
+#   lower_better  : 값이 낮아질수록 개선 (mean_delta < 0 = 개선)
+#   higher_better : 값이 높아질수록 개선 (mean_delta > 0 = 개선)
+# utilization_avg=lower_better 근거: cascade_analyzer/impact_calculator.py가
+#   utilization을 "stress 신호"로 해석 (utilization↑ = 병목 신호) — 시스템 일관성.
+KPI_DIRECTIONS_COMPARE: dict[str, str] = {
+    "q_time_min": "lower_better",
+    "wip": "lower_better",
+    "wait_ratio": "lower_better",
+    "utilization_avg": "lower_better",
+    "available_tool_ratio": "higher_better",
+}
+
+# 5개 KPI 가중치 (composite_score 합산용, 합=1.0). 도메인 합의 필요.
+W_KPI_Q_TIME: float = 0.40
+W_KPI_WIP: float = 0.25
+W_KPI_WAIT_RATIO: float = 0.15
+W_KPI_UTIL: float = 0.10
+W_KPI_AVAIL: float = 0.10
+# 불확실성(CI 폭) 페널티 가중치
+W_KPI_UNCERTAINTY: float = 0.10
+
+# 의사결정 임계값 — 데이터 분포로 튜닝 필요
+COMPARE_EQUIVALENCE_EPS: float = 0.05   # 1위와 점수 차이가 이 이하면 통계적 동등
+COMPARE_NO_EFFECT_MAX: float = 0.01     # 최고 점수가 이 이하면 "효과 미검증"
+
+# KPI별 "최소 의미있는 변화량" — 후보 간 Δ가 이 이하면 의미 없음으로 본다.
+# 운영자 합의 필요 (코드 베이스에 별도 정답 없음).
+MIN_DELTA_Q_TIME: float = 5.0
+MIN_DELTA_WIP: float = 1.0
+MIN_DELTA_WAIT_RATIO: float = 0.02
+MIN_DELTA_UTIL: float = 0.02
+MIN_DELTA_AVAIL: float = 0.02
+
+# action_kind 운영 메타데이터.
+#   effort        : 1(가벼움) ~ 4(무거움). 동등 케이스 tie-break + LLM 근거에 노출.
+#   scope         : 영향 범위 — single_lot < tool_local < toolgroup < fab_wide
+#   reversibility : 되돌리기 난이도 — high(쉬움) / medium / low(어려움)
+#   description_ko: 한국어 라벨
+# 현재 solution_generator가 만드는 건 DISPATCH_RULE_OVERRIDE만 (action_mapper.py).
+# LOT_HOLD/SET_SUPER_HOT은 FabEnv 지원 — 향후 확장 대비.
+ACTION_KIND_METADATA: dict[str, dict] = {
+    "LOT_HOLD": {
+        "effort": 1,
+        "scope": "single_lot",
+        "reversibility": "high",
+        "description_ko": "단일 lot 일시 보류",
+    },
+    "SET_SUPER_HOT": {
+        "effort": 2,
+        "scope": "single_lot",
+        "reversibility": "high",
+        "description_ko": "단일 lot 우선처리 지정",
+    },
+    "DISPATCH_RULE_OVERRIDE": {
+        "effort": 4,
+        "scope": "fab_wide",
+        "reversibility": "low",
+        "description_ko": "FAB 디스패치 룰 변경",
+    },
+    "UNKNOWN": {
+        "effort": 99,
+        "scope": "unknown",
+        "reversibility": "unknown",
+        "description_ko": "미정",
+    },
+}
