@@ -811,14 +811,13 @@ def compare_hitl(state: "PipelineState") -> dict:
     _log = get_logger(__name__)
 
     compare_formatted = state.get("compare_formatted", [])
-    if not compare_formatted:
-        return {"compare_results": []}
-
     webhook_mode = os.environ.get("WEBHOOK_MODE", "").lower() in ("1", "true", "yes")
     auto_approve = os.environ.get("AUTO_APPROVE", "").lower() in ("1", "true", "yes")
 
     if webhook_mode:
         return _hitl_webhook(state, compare_formatted, _log)
+    if not compare_formatted:
+        return {"compare_results": []}
     elif auto_approve:
         return _hitl_auto(compare_formatted, _log)
     else:
@@ -852,7 +851,7 @@ def _hitl_webhook(state: "PipelineState", compare_formatted: list[dict], _log) -
     pending_path.write_text(json.dumps(pending, ensure_ascii=False, indent=2), encoding="utf-8")
     _log.info(f"[HITL-Webhook] 상태 저장: {pending_path.name}")
 
-    _notify_spring_boot(hitl_token, compare_formatted, _log)
+    _notify_spring_boot(hitl_token, state.get("case_id"), compare_formatted, _log)
 
     print(f"\n{'='*60}")
     print(f"[Phase 1 완료] HITL 대기 중")
@@ -864,7 +863,7 @@ def _hitl_webhook(state: "PipelineState", compare_formatted: list[dict], _log) -
     return {"compare_results": [], "hitl_approved": None, "hitl_token": hitl_token}
 
 
-def _notify_spring_boot(hitl_token: str, compare_formatted: list[dict], _log) -> None:
+def _notify_spring_boot(hitl_token: str, case_id: str | None, compare_formatted: list[dict], _log) -> None:
     """Spring Boot에 HITL 대기 요청 전송 (실패해도 Phase 1 계속 진행).
 
     compare/2.0 스키마 그대로 송신. Spring Boot 매핑은 별도 작업.
@@ -881,6 +880,7 @@ def _notify_spring_boot(hitl_token: str, compare_formatted: list[dict], _log) ->
     internal_token = os.environ.get("INTERNAL_API_TOKEN", "")
     results = [cf["result_v2"] for cf in compare_formatted]
     payload = json.dumps({
+        "caseId": case_id,
         "hitlToken": hitl_token,
         "schemaVersion": SCHEMA_VERSION,
         "toolgroups": [cf["toolgroup"] for cf in compare_formatted],

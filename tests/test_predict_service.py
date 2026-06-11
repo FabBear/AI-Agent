@@ -15,7 +15,6 @@ def test_predict_service_loads_model_and_returns_shap() -> None:
         wip=10.0,
         setup_ratio_avg=0.1,
         utilization_avg=0.8,
-        max_avg_q_time=30.0,
         max_util=0.9,
     )
 

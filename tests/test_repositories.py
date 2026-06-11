@@ -32,7 +32,6 @@ async def test_tg_metrics_repository_maps_database_row() -> None:
     assert records[0].tg_id == tg_id
     assert records[0].kpi.toolgroup == "DIFFUSION_FE_127"
     assert records[0].kpi.max_util == 0.8
-    assert records[0].kpi.max_avg_q_time == 15.5
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,7 @@ U_HI: float = 0.8
 U_LO: float = 0.5
 
 # ── 모델 파일 경로 ────────────────────────────────────────────────────
-# Simulation 레포에서 학습 후 내보낸 모델을 AI-Agent 에서 직접 참조
+# AI-Agent/models/ 또는 컨테이너 내 /app/models/
 MODEL_DIR: str = "models"
 MODEL_FILENAME: str = "bottleneck_xgb.ubj"
 FEATURE_COLS_FILENAME: str = "bottleneck_feature_cols.json"

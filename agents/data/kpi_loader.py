@@ -35,7 +35,11 @@ def _get_engine():
 _SNAPSHOT_SQL = text("""
 SELECT
     tg.tg_code                                        AS toolgroup,
-    m.time_step::float                                AS snapshot_time,
+    (
+        EXTRACT(EPOCH FROM (
+            m.measured_at - (SELECT MIN(measured_at) FROM ps_tg_metrics)
+        )) / 60
+    )::float                                          AS snapshot_time,
     COALESCE(m.utilization_rate,      0)::float       AS utilization_avg,
     COALESCE(m.wip_count,             0)::float       AS wip,
     COALESCE(m.available_tool_ratio,  0)::float       AS available_tool_ratio,
@@ -75,7 +79,7 @@ def _rows_to_kpi_list(rows) -> list[ToolGroupKPI]:
 
 
 def load_kpi_snapshot(snapshot_time: float | None = None) -> list[ToolGroupKPI]:
-    """최신 (또는 지정한 epoch-minute에 가장 가까운) 스냅샷의 TG KPI를 반환한다."""
+    """최신 (또는 시뮬레이션 시작 기준 분에 가장 가까운) TG KPI를 반환한다."""
     engine = _get_engine()
     with engine.connect() as conn:
         if snapshot_time is None:
@@ -83,13 +87,16 @@ def load_kpi_snapshot(snapshot_time: float | None = None) -> list[ToolGroupKPI]:
                 text("SELECT MAX(measured_at) FROM ps_tg_metrics")
             ).scalar()
         else:
-            # snapshot_time은 시뮬 tick(time_step); 숫자 비교로 가장 가까운 measured_at 선택
             measured_at = conn.execute(text("""
                 SELECT measured_at
                 FROM ps_tg_metrics
-                ORDER BY ABS(time_step - :st)
+                ORDER BY ABS(
+                    EXTRACT(EPOCH FROM (
+                        measured_at - (SELECT MIN(measured_at) FROM ps_tg_metrics)
+                    )) / 60 - :st
+                )
                 LIMIT 1
-            """), {"st": int(snapshot_time)}).scalar()
+            """), {"st": float(snapshot_time)}).scalar()
 
         if measured_at is None:
             return []
@@ -106,17 +113,20 @@ def load_kpi_window(
 ) -> dict[float, list[ToolGroupKPI]]:
     """snapshot_time 포함 직전 n_snapshots개 스냅샷의 KPI를 반환한다.
 
-    Returns: {snapshot_time(epoch-min): [ToolGroupKPI, ...]} (시간 오름차순)
+    Returns: {snapshot_time(시뮬레이션 상대 분): [ToolGroupKPI, ...]} (시간 오름차순)
     """
     engine = _get_engine()
     with engine.connect() as conn:
         times_rows = conn.execute(text("""
             SELECT DISTINCT measured_at
             FROM ps_tg_metrics
-            WHERE time_step <= :st
+            WHERE measured_at <= (
+                SELECT MIN(measured_at) + (:st * INTERVAL '1 minute')
+                FROM ps_tg_metrics
+            )
             ORDER BY measured_at DESC
             LIMIT :n
-        """), {"st": int(snapshot_time), "n": n_snapshots}).fetchall()
+        """), {"st": float(snapshot_time), "n": n_snapshots}).fetchall()
 
         if not times_rows:
             return {}

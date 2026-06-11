@@ -6,6 +6,7 @@ from agents.schemas.kpi import ToolGroupKPI
 
 
 class PipelineState(TypedDict):
+    case_id: str | None                 # 병목 케이스 ID (Spring Boot → HITL webhook 연결)
     kpi_snapshot: list[ToolGroupKPI]
     prev_kpi_snapshot: list[ToolGroupKPI]  # t-120분 스냅샷 (delta 피처용)
     potential_bottlenecks: list[PotentialBottleneck]

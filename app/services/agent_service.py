@@ -83,12 +83,10 @@ async def run_pipeline(
     try:
         kpi_list = await asyncio.to_thread(
             load_kpi_snapshot,
-            settings.agent_csv_dir,
             snapshot_time,
         )
         window = await asyncio.to_thread(
             load_kpi_window,
-            settings.agent_csv_dir,
             snapshot_time,
             2,
         )
@@ -100,9 +98,9 @@ async def run_pipeline(
             tg_code,
             snapshot_time,
             bottleneck_prob,
+            case_id=case_id,
         )
         pipeline = build_pipeline(
-            csv_dir=settings.agent_csv_dir,
             run_sim=True,
             phase1_only=True,
             run_detection=False,
@@ -183,7 +181,8 @@ async def run_post_hitl(
         )
         result = await asyncio.to_thread(build_phase2_pipeline().invoke, state)
         report_results = result.get("report_results", [])
-        tg_code = str((pending.get("compare_formatted") or [{}])[0].get("toolgroup", ""))
+        source_rows = pending.get("compare_formatted") or pending.get("alerts") or [{}]
+        tg_code = str(source_rows[0].get("toolgroup", ""))
         for report_result in report_results:
             await report_repo.insert(case_id, report_result)
             await _index_report_to_qdrant(pool, case_id, tg_code, report_result)
@@ -270,10 +269,12 @@ def _initial_state(
     tg_code: str,
     snapshot_time: float,
     bottleneck_prob: float,
+    case_id: "UUID | None" = None,
 ) -> dict:
     if not any(kpi.toolgroup == tg_code for kpi in kpi_list):
         raise ValueError(f"요청한 TG의 KPI를 찾을 수 없습니다: {tg_code}")
     return {
+        "case_id": str(case_id) if case_id else None,
         "kpi_snapshot": kpi_list,
         "prev_kpi_snapshot": prev_kpi,
         "potential_bottlenecks": [
@@ -384,7 +385,18 @@ def _reconstruct_phase2_state(
         "rejection_reason": None,
     }
     compare_results = []
-    for formatted in pending.get("compare_formatted", []):
+    compare_formatted = pending.get("compare_formatted", [])
+    if not compare_formatted and pending.get("alerts"):
+        compare_formatted = [
+            {
+                "toolgroup": pending["alerts"][0]["toolgroup"],
+                "recommendation": {
+                    "reason": selected_plan.get("plan_title") or "관리자 승인 대응안",
+                },
+                "action_effects": [],
+            }
+        ]
+    for formatted in compare_formatted:
         recommendation = dict(formatted.get("recommendation") or {})
         recommendation["action_label"] = selected_label
         recommendation["reason"] = (
@@ -422,7 +434,7 @@ def _reconstruct_phase2_state(
         "hitl_token": pending.get("hitl_token"),
         "verification_results": [],
         "compare_inputs": [],
-        "compare_formatted": pending.get("compare_formatted", []),
+        "compare_formatted": compare_formatted,
         "compare_results": compare_results,
         "report_draft": [],
         "report_results": [],

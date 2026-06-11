@@ -51,10 +51,12 @@ def analyze_cause(
     window = load_kpi_window(snapshot_time, n_snapshots=6)
 
     # snapshot_time은 time_step 기준 시뮬 tick — G* 경로와 일치
-    _SIM_CSV_DIR = (
-        Path(__file__).parent.parent.parent.parent
-        / "Simulation" / "simulation" / "sim_csv_out"
+    docker_sim_root = Path("/app/simulation")
+    local_sim_root = (
+        Path(__file__).parent.parent.parent.parent / "Simulation" / "simulation"
     )
+    sim_root = docker_sim_root if docker_sim_root.is_dir() else local_sim_root
+    _SIM_CSV_DIR = sim_root / "sim_csv_out"
     fwd_base_dir = _SIM_CSV_DIR / f"fwd_base_t{int(snapshot_time)}"
     g_star = load_g_star(t0=snapshot_time, out_dir=fwd_base_dir)
     if g_star:

@@ -5,7 +5,7 @@ from uuid import UUID
 import httpx
 
 from app.config import Settings, get_settings
-from app.repositories.agent_step_repository import STEP_NAME_MAP, STEP_ORDER_MAP
+from app.repositories.agent_step_repository import STEP_NAME_MAP
 
 logger = logging.getLogger(__name__)
 _spring_client: "SpringClient | None" = None
@@ -33,14 +33,11 @@ class SpringClient:
         step_name = STEP_NAME_MAP.get(node_name, node_name)
         payload = {
             "caseId": str(case_id),
+            "notificationType": self._notification_type(step_name, status),
             "stepName": step_name,
-            "stepOrder": STEP_ORDER_MAP.get(step_name),
-            "status": status,
-            "outputSummary": summary,
-            "completedAt": datetime.now(UTC).isoformat(),
         }
         try:
-            await self._post("/api/internal/agent-step", payload)
+            await self._post("/api/internal/agent/step-done", payload)
         except Exception as exc:
             logger.warning("Agent step 알림 전송 실패: %s", exc)
 
@@ -89,6 +86,16 @@ class SpringClient:
 
     async def close(self) -> None:
         await self._client.aclose()
+
+    @staticmethod
+    def _notification_type(step_name: str, status: str) -> str:
+        if status == "FAILED":
+            return "AGENT_PIPELINE_FAILED"
+        if step_name == "HITL_WAITING":
+            return "AGENT_HITL_WAITING"
+        if step_name == "REPORT_GEN":
+            return "AGENT_PIPELINE_DONE"
+        return "AGENT_STEP_UPDATED"
 
 
 def get_spring_client(settings: Settings | None = None) -> SpringClient:

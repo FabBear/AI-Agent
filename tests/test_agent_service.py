@@ -54,6 +54,44 @@ def test_reconstruct_phase2_state_applies_selected_plan() -> None:
     assert state["hitl_approved"] is True
 
 
+def test_reconstruct_phase2_state_uses_alert_when_comparison_was_skipped() -> None:
+    pending = {
+        "hitl_token": "token",
+        "compare_formatted": [],
+        "alerts": [
+            {
+                "toolgroup": "Diffusion_FE_127",
+                "severity": "Critical",
+                "composite_score": 0.95,
+                "probability": 0.95,
+                "impact": {
+                    "capacity_stress_score": 0.8,
+                    "ct_increase_min": 10,
+                    "at_risk_lots": 2,
+                    "affected_tgs": [],
+                    "impact_score": 0.8,
+                },
+                "snapshot_time": 120,
+            }
+        ],
+        "kpi_snapshot": [],
+        "prev_kpi_snapshot": [],
+        "cause_reports": [],
+        "solution_candidates": [],
+    }
+
+    state = _reconstruct_phase2_state(
+        pending,
+        {"plan_seq": 1, "plan_title": "승인 대응안"},
+        uuid4(),
+        datetime(2026, 6, 10, tzinfo=UTC),
+        "승인",
+    )
+
+    assert state["compare_results"][0]["toolgroup"] == "Diffusion_FE_127"
+    assert state["compare_results"][0]["recommendation"]["reason"] == "승인 대응안"
+
+
 def test_initial_state_uses_requested_bottleneck_without_redetection() -> None:
     kpi = ToolGroupKPI(
         toolgroup="Diffusion_FE_127",
@@ -64,7 +102,6 @@ def test_initial_state_uses_requested_bottleneck_without_redetection() -> None:
         wip=10.0,
         setup_ratio_avg=0.1,
         utilization_avg=0.8,
-        max_avg_q_time=30.0,
         max_util=0.9,
     )
 
@@ -82,7 +119,6 @@ def test_initial_state_rejects_unknown_target_tg() -> None:
 
 def test_pipeline_can_start_from_cascade() -> None:
     pipeline = build_pipeline(
-        csv_dir="../Simulation/simulation/sim_csv_out",
         run_sim=False,
         run_g_star=False,
         phase1_only=True,

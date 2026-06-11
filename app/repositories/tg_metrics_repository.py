@@ -73,7 +73,6 @@ class TgMetricsRepository:
                 wip=float(row["wip_count"] or 0),
                 setup_ratio_avg=float(row["setup_ratio"] or 0),
                 utilization_avg=utilization,
-                max_avg_q_time=q_time,
                 max_util=utilization,
             ),
         )

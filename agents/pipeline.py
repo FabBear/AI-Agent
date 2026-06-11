@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import subprocess
+import sys
 from pathlib import Path
 
 from langgraph.graph import END, StateGraph
@@ -28,9 +29,12 @@ from agents.state import PipelineState
 
 _log = get_logger(__name__)
 
-_SIM_ROOT = Path(__file__).parent.parent.parent / "Simulation" / "simulation"
+_DOCKER_SIM_ROOT = Path("/app/simulation")
+_LOCAL_SIM_ROOT = Path(__file__).parent.parent.parent / "Simulation" / "simulation"
+_IS_DOCKER = _DOCKER_SIM_ROOT.is_dir()
+_SIM_ROOT = _DOCKER_SIM_ROOT if _IS_DOCKER else _LOCAL_SIM_ROOT
 _SIM_CSV = _SIM_ROOT / "sim_csv_out"
-_SIM_PY = _SIM_ROOT / ".venv" / "bin" / "python"
+_SIM_PY = Path(sys.executable) if _IS_DOCKER else _SIM_ROOT / ".venv" / "bin" / "python"
 _ML_G_STAR = _SIM_ROOT / "tools" / "ml_g_star_at_t0.py"
 _TRIGGER_FWD = _SIM_ROOT / "tools" / "trigger_forward_pipeline.py"
 _G_STAR_OUT = _SIM_ROOT / "out" / "ml_g_star_e2e"

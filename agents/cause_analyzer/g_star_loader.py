@@ -6,10 +6,12 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_G_STAR_OUT = (
-    Path(__file__).parent.parent.parent.parent
-    / "Simulation" / "simulation" / "out" / "ml_g_star_e2e"
+_DOCKER_SIM_ROOT = Path("/app/simulation")
+_LOCAL_SIM_ROOT = (
+    Path(__file__).parent.parent.parent.parent / "Simulation" / "simulation"
 )
+_SIM_ROOT = _DOCKER_SIM_ROOT if _DOCKER_SIM_ROOT.is_dir() else _LOCAL_SIM_ROOT
+_G_STAR_OUT = _SIM_ROOT / "out" / "ml_g_star_e2e"
 
 
 @dataclass
