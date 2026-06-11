@@ -103,6 +103,7 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
     cause_analysis: dict = {}
     shap_analysis: dict = {}
     feature_trend: list[dict] = []
+    trend_stats: list[dict] = []
 
     if cause_report and cause_report.shap_top:
         total = sum(abs(f.shap_value) for f in cause_report.shap_top) or 1.0
@@ -124,10 +125,23 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
                 "confidence_level": c.confidence_level,
                 "agreed_features": c.agreed_features,
                 "conflicted_features": c.conflicted_features,
+                "upstream_aligns": c.upstream_aligns,
+                "sim_aligns": c.sim_aligns,
                 "g_star_confirmed": c.g_star_confirmed,
                 "g_star_proba": c.g_star_proba,
+                "g_star_upstream_confirmed": c.g_star_upstream_confirmed,
+                "g_star_sig_kpis": [
+                    {
+                        "kpi": k.kpi,
+                        "delta_mean": round(float(k.delta_mean), 4),
+                        "t_p_adj": round(float(k.t_p_adj), 4),
+                        "significant": k.significant,
+                    }
+                    for k in (c.g_star_sig_kpis or [])
+                ],
                 "summary": c.summary,
             }
+
 
         categories_list = [
             {
@@ -153,7 +167,24 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
                 "primary_reasoning": j.primary_reasoning,
                 "secondary_causes": j.secondary_causes,
                 "dismissed": j.dismissed,
+                "dismissed_reason": j.dismissed_reason,
             }
+
+        evidence_list: list[dict] = [
+            {
+                "feature": e.feature,
+                "votes": e.votes,
+                "confidence": e.confidence,
+                "shap_value": e.shap_value,
+                "trend_slope": e.trend_slope,
+                "trend_r2": e.trend_r2,
+                "trend_significant": e.trend_significant,
+                "upstream_match": e.upstream_match,
+                "g_star_p_value": e.g_star_p_value,
+                "g_star_significant": e.g_star_significant,
+            }
+            for e in (cause_report.evidence_bundle or [])
+        ]
 
         cause_analysis = {
             "shap_top": shap_top,
@@ -161,6 +192,9 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
             "judgment": judgment_dict,
             "summary": cause_report.cause_summary or "",
             "consensus": consensus_dict,
+            "judgment": judgment_dict,
+            "evidence_bundle": evidence_list,
+            "upstream_suspects": cause_report.upstream_suspects or [],
         }
 
         shap_analysis = {
@@ -188,6 +222,16 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
                 row[feat] = round(float(vals[i]), 4) if i < len(vals) else None
             feature_trend.append(row)
 
+        trend_stats = [
+            {
+                "feature": t.feature,
+                "slope_per_hour": round(float(t.slope_per_hour), 4),
+                "r2": round(float(t.r2), 4),
+                "significant": t.significant,
+            }
+            for t in cause_report.trend_top
+        ]
+
     return {
         "toolgroup": tg,
         "process_name": tg,
@@ -202,6 +246,7 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
         "cause_analysis": cause_analysis,
         "shap_analysis": shap_analysis,
         "feature_trend": feature_trend,
+        "trend_stats": trend_stats,
         "action_effects": compare_result.get("action_effects", []),
         "recommendation": compare_result.get("recommendation", {}),
         "decision_info": compare_result.get("decision_info", {}),

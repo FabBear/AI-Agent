@@ -775,9 +775,35 @@ def compare_llm(state: "PipelineState") -> dict:
         cascade = _build_cascade_block(ci)
         action_options = [_build_current_state_option(ci, current_state["kpi"])]
         for c in candidates:
-            action_options.append(_build_action_option(c, current_state["kpi"], decision_info))
-        recommendation = _build_recommendation_block(recommendation_obj, decision_info, top_candidate)
-        decision_meta = _build_decision_meta(decision_info)
+            s = scored_map.get(c["label"], {})
+            label_display = (
+                f"{c['label']} {s.get('badge', '')}" if c["label"] == top_label else c["label"]
+            )
+            raw_kpi_stats = c.get("kpi_stats", {})
+            q_stats = raw_kpi_stats.get("q_time_min", {})
+            kpi_full_stats = {
+                kpi: {
+                    "mean_delta": round(float(s.get("mean_delta", 0)), 4),
+                    "ci_lo": round(float(s.get("ci_lo", 0)), 4),
+                    "ci_hi": round(float(s.get("ci_hi", 0)), 4),
+                    "paired_t_p": s.get("paired_t_p"),
+                    "verdict": s.get("verdict", "unknown"),
+                }
+                for kpi, s in raw_kpi_stats.items()
+            }
+            action_effects.append({
+                "label": label_display,
+                "action_kind": c["action_kind"],
+                "description": c["description"],
+                "simulation_confidence": c.get("simulation_confidence"),
+                "kpi_delta": c["kpi_delta"],
+                "verdict": c.get("verdict"),
+                "paired_t_p": c.get("paired_t_p"),
+                "paired_n": c.get("paired_n"),
+                "ci_lo": q_stats.get("ci_lo"),
+                "ci_hi": q_stats.get("ci_hi"),
+                "kpi_full_stats": kpi_full_stats,
+            })
 
         result_v2 = {
             "meta": meta,

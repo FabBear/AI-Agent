@@ -59,6 +59,7 @@ class ReportState(TypedDict):
     diffusion_analysis: dict
     shap_analysis: dict
     feature_trend: list
+    trend_stats: list
     cause_analysis: dict
     action_effects: list
     recommendation: dict
@@ -240,6 +241,7 @@ def write_cause(state: ReportState) -> dict:
     """3. 원인 분석 TOP 3"""
     ca = state.get("cause_analysis") or {}
     ft = state.get("feature_trend", [])
+    ts = state.get("trend_stats", [])
     shap = state.get("shap_analysis", {})
     section = _llm_write(
         _SYS,
@@ -248,19 +250,32 @@ def write_cause(state: ReportState) -> dict:
 원인 요약: {ca.get("summary", "")}
 SHAP 기여도 순위: {json.dumps(ca.get("shap_top", []), ensure_ascii=False)}
 컨센서스 판정: {json.dumps(ca.get("consensus"), ensure_ascii=False)}
+LLM 판정 근거: {json.dumps(ca.get("judgment"), ensure_ascii=False)}
+증거 번들 (4가지 분석 수렴): {json.dumps(ca.get("evidence_bundle", []), ensure_ascii=False)}
+업스트림 과부하 공정: {json.dumps(ca.get("upstream_suspects", []), ensure_ascii=False)}
 feature 트렌드 데이터: {json.dumps(ft, ensure_ascii=False)}
+트렌드 통계 (slope·R²): {json.dumps(ts, ensure_ascii=False)}
 ML SHAP 분석: {json.dumps(shap, ensure_ascii=False)}
 
 출력 형식 (이 형식 그대로):
 
 ## 3. 원인 분석 TOP 3
 
-| 순위 | 원인(feature) | 기여도(%) | 현재값 |
-|------|--------------|----------|--------|
-[shap_top의 rank·feature·contribution_pct·kpi_value를 행으로 채울 것]
+| 순위 | 원인(feature) | 기여도(%) | 현재값 | 4개 분석 수렴 | 신뢰도 |
+|------|--------------|----------|--------|-------------|--------|
+[shap_top의 rank·feature·contribution_pct·kpi_value를 행으로. evidence_bundle에서 해당 feature의 votes(예: "3/4")와 confidence를 매핑하여 채울 것. evidence_bundle에 없으면 "-"]
 
-### 판정 요약
-[consensus.summary 내용을 2~3문장으로 정리. confidence_level 포함]
+### 판정 근거
+[judgment.primary_reasoning을 그대로 서술. 이어서 secondary_causes가 있으면 "보조 원인: X, Y", dismissed가 있으면 "기각: Z (이유: dismissed_reason)" 형식으로 추가]
+
+### 업스트림 과부하 공정
+[upstream_suspects 목록이 있으면 "과부하 공정: A → B → C (WIP 과공급으로 병목 TG에 유입)" 형식으로. 없으면 "업스트림 과부하 공정 없음"]
+
+### 4가지 분석 수렴 증거
+
+| 피처 | SHAP | 트렌드 유의 | 업스트림 일치 | G* 유의 | 수렴 수 | 신뢰도 |
+|------|------|-----------|------------|--------|--------|--------|
+[evidence_bundle 데이터를 행으로. SHAP은 shap_value(+면 ↑병목, -면 ↓완화), 트렌드·G* 유의는 ✅/❌, 업스트림은 ✅/❌, 수렴 수는 votes/4]
 
 ### ML 모델 SHAP 분석 (Top 3 Feature)
 > 모델: {shap.get('model', '-')}
@@ -274,6 +289,12 @@ ML SHAP 분석: {json.dumps(shap, ensure_ascii=False)}
 | 시각 | q_time_min | wait_ratio | wip | max_util |
 |------|-----------|-----------|-----|---------|
 [feature_trend 데이터를 행으로 채울 것. 값 없는 feature는 -]
+
+### 트렌드 악화 속도
+
+| 피처 | 시간당 변화율 | R² | 통계 유의 |
+|------|------------|-----|---------|
+[trend_stats 데이터를 행으로. slope_per_hour는 부호 포함(예: +12.4/h), r2는 소수 2자리, significant는 ✅/❌. slope_per_hour > 0이면 악화, < 0이면 개선 방향으로 해석]
 
 ---""",
     )
@@ -325,9 +346,15 @@ def write_actions(state: ReportState) -> dict:
 
 ### ③ 대응안 A / B / C 비교
 
-| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 시뮬 신뢰도 | 운영 부담 | 영향 범위 |
-|--------|------|------|-------------|---------|-----------|----------|----------|
-[각 대응안을 행으로. action_metadata.effort/4 로 운영 부담, action_metadata.scope 로 영향 범위 표기. ✅ 표시 없음. simulation_confidence는 % 단위]
+| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 시뮬 신뢰도(%) | 통계 검정 |
+|--------|------|------|-------------|---------|--------------|---------|
+[각 대응안을 행으로. simulation_confidence는 % 단위. 통계 검정은 verdict(improved→"유의 개선", worsened→"유의 악화", unchanged→"변화 없음")와 paired_t_p를 "유의 개선 (p=0.003)" 형식으로. verdict나 paired_t_p 없으면 "-"]
+
+### ③ KPI별 상세 검증 결과 (30회 paired t-test)
+
+| 대응안 | KPI | 평균 변화 | 95% CI | p-value | 판정 |
+|--------|-----|---------|--------|---------|------|
+[effects의 각 대응안(label)별로 kpi_full_stats의 KPI를 행으로 나열. mean_delta(부호 포함), ci_lo~ci_hi 범위, paired_t_p, verdict(improved→"✅ 개선", worsened→"⚠️ 악화", unchanged→"변화없음"). kpi_full_stats 없으면 해당 행 생략]
 
 ---""",
         )
@@ -366,6 +393,7 @@ def write_actions(state: ReportState) -> dict:
 - **헤드라인**: {structured.get('headline', rec.get('reason', '-'))}
 - **핵심 근거**: {structured.get('primary_reason', '-')}
 - **예상 효과 요약**: [kpi_delta를 해석하여 한 문장으로]
+- **통계 검정**: [approved의 verdict·paired_t_p·ci_lo·ci_hi·paired_n을 사용하여 "30회 paired t-test 결과 유의미한 개선 확인 (p=0.003, 95% CI: [-12.3, -8.1]분, n=30)" 형식으로 한 문장. paired_t_p 없으면 생략]
 
 ### ③ 받아들이는 트레이드오프
 [structured.tradeoffs가 비어있지 않으면 각 항목을 bullet로. 비어있으면 "- 통계적으로 유의미한 악화 KPI 없음" 한 줄]
@@ -381,7 +409,6 @@ def write_actions(state: ReportState) -> dict:
 | 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 시뮬 신뢰도 | 운영 부담 | 영향 범위 | 가역성 |
 |--------|------|------|-------------|---------|-----------|----------|----------|--------|
 [각 대응안을 행으로. action_metadata.effort/4 로 운영 부담, action_metadata.scope 로 영향 범위, action_metadata.reversibility 로 가역성 표기. 승인된 것(label={rec.get('action_label')})에는 ✅ 표시. simulation_confidence는 % 단위]
-
 ---""",
         )
     return {"section_actions": section}
