@@ -82,7 +82,6 @@ def test_initial_state_rejects_unknown_target_tg() -> None:
 
 def test_pipeline_can_start_from_cascade() -> None:
     pipeline = build_pipeline(
-        csv_dir="../Simulation/simulation/sim_csv_out",
         run_sim=False,
         run_g_star=False,
         phase1_only=True,

@@ -7,6 +7,9 @@ import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import Field, model_validator
 
+from agents.agent_task import AgentTaskAgentRequest, AgentTaskAgentResponse
+from agents.fab_briefing_agent import build_fab_briefing_response
+from agents.period_report_agent import build_period_report_response
 from app.api.deps import InternalUser, get_db, get_internal_user, verify_internal_token
 from app.api.schemas import ApiModel
 from app.common.responses import ApiResponse, success
@@ -14,6 +17,7 @@ from app.repositories.agent_step_repository import AgentStepRepository
 from app.services.agent_service import run_pipeline_with_timeout, run_post_hitl
 
 router = APIRouter()
+_USER_TASKS: dict[UUID, AgentTaskAgentResponse] = {}
 
 
 class RiskGrade(str, Enum):
@@ -94,6 +98,34 @@ async def run_agent(
         pool,
     )
     return success(AgentRunResult(case_id=request.case_id))
+
+
+@router.post("/tasks", response_model=AgentTaskAgentResponse)
+async def create_agent_task(
+    request: AgentTaskAgentRequest,
+    _: Annotated[None, Depends(verify_internal_token)],
+) -> AgentTaskAgentResponse:
+    if request.task_type == "REPORT_PERIOD_SUMMARY":
+        response = await build_period_report_response(request)
+    else:
+        response = await build_fab_briefing_response(request)
+    _USER_TASKS[request.task_id] = response
+    return response
+
+
+@router.get("/tasks/{task_id}", response_model=AgentTaskAgentResponse)
+async def get_agent_task(
+    task_id: UUID,
+    _: Annotated[None, Depends(verify_internal_token)],
+) -> AgentTaskAgentResponse:
+    response = _USER_TASKS.get(task_id)
+    if response is None:
+        return AgentTaskAgentResponse(
+            status="FAILED",
+            progress=[],
+            errorMessage="해당 taskId의 Agent 작업을 찾을 수 없습니다.",
+        )
+    return response
 
 
 @router.post("/hitl-result", response_model=ApiResponse[HitlResult])

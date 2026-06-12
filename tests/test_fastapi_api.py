@@ -67,6 +67,51 @@ async def test_agent_run_returns_accepted(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_user_invoked_agent_task_returns_structured_result(client: AsyncClient) -> None:
+    task_id = str(uuid4())
+    tg_id = str(uuid4())
+    response = await client.post(
+        "/api/agent/tasks",
+        headers=internal_token_headers(),
+        json={
+            "taskId": task_id,
+            "fabId": str(uuid4()),
+            "userId": str(uuid4()),
+            "taskType": "FAB_SNAPSHOT_BRIEFING",
+            "sourcePage": "FAB3D",
+            "context": {
+                "backendContext": {
+                    "mesCurrent": {
+                        "toolGroups": [
+                            {
+                                "tgId": tg_id,
+                                "tgName": "BACKEND_AUTHORITATIVE_TG",
+                                "areaName": "Defect Metrology",
+                                "utilizationRate": 0.94,
+                                "wipCount": 51,
+                                "bottleneckProb": 0.91,
+                            }
+                        ]
+                    }
+                }
+            },
+            # 결정론 검증을 위해 LLM(agentic) 경로를 끄고 룰베이스 결과를 단언한다.
+            "params": {"useLlm": False},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "SUCCEEDED"
+    assert body["result"]["references"]["tgIds"] == [tg_id]
+    assert "BACKEND_AUTHORITATIVE_TG" in body["result"]["summary"]
+
+    follow_up = await client.get(f"/api/agent/tasks/{task_id}", headers=internal_token_headers())
+    assert follow_up.status_code == 200
+    assert follow_up.json()["result"]["summary"] == body["result"]["summary"]
+
+
+@pytest.mark.asyncio
 async def test_internal_token_is_required(client: AsyncClient) -> None:
     response = await client.post(
         "/api/ml/predict",
