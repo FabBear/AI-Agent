@@ -24,6 +24,7 @@ class SolutionCandidate(BaseModel):
     rationale: str = ""
 
 
+
 class GlobalSolutionPlan(BaseModel):
     """전체 Critical TG를 한번에 커버하는 글로벌 대응 플랜 (시뮬레이션 입력값).
 
