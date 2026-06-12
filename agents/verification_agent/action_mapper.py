@@ -1,4 +1,4 @@
-"""GlobalSolutionPlan → mes_whatif_action rows 변환.
+"""SolutionCandidate / GlobalSolutionPlan → mes_whatif_action rows 변환.
 
 FabEnv가 지원하는 action_kind:
   DISPATCH_RULE_OVERRIDE  — 툴그룹 디스패치 규칙 변경
@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import json
 
-from agents.schemas.solution import GlobalSolutionPlan
+from agents.schemas.alert import BottleneckAlert
+from agents.schemas.solution import GlobalSolutionPlan, SolutionCandidate
 
 # lot_priority_rule → DISPATCH_RULE_OVERRIDE 규칙 매핑
 _PRIORITY_RULE_TO_DISPATCH: dict[str, str] = {
@@ -22,6 +23,68 @@ _PRIORITY_RULE_TO_DISPATCH: dict[str, str] = {
     "SUPERHOTLOT_FIRST": "superhotlot setupavoidance",
     "FIFO": "FIFO",
 }
+
+def candidate_to_action_rows(
+    candidate: SolutionCandidate,
+    alert: BottleneckAlert,
+    t0: float,
+) -> tuple[list[dict], float]:
+    """SolutionCandidate → (action_rows, release_interval_multiplier).
+
+    release_interval_delta_pct → multiplier = 1 + pct/100
+    lot_priority_rule / dispatch_rule → DISPATCH_RULE_OVERRIDE (TG 레벨 정책 변경)
+    priority_direction → lot 레벨 LOT_PRIORITY (sim_executor._make_lot_actions에서 처리)
+    superhotlot_enable → DISPATCH_RULE_OVERRIDE "superhotlot setupavoidance" (TG 정책)
+                         + 개별 lot SET_SUPER_HOT (sim_executor._make_lot_actions에서 처리)
+    """
+    pct = candidate.params.release_interval_delta_pct
+    release_multiplier = 1.0 + (pct / 100.0) if pct is not None else 1.0
+
+    tg = alert.toolgroup
+    rows: list[dict] = []
+    seq = 0
+
+    dispatch_rule: str | None = None
+    if candidate.params.lot_priority_rule is not None:
+        dispatch_rule = _PRIORITY_RULE_TO_DISPATCH.get(
+            candidate.params.lot_priority_rule, candidate.params.lot_priority_rule
+        )
+    elif candidate.params.dispatch_rule is not None:
+        dispatch_rule = candidate.params.dispatch_rule
+
+    if dispatch_rule is not None:
+        rows.append({
+            "seq": seq,
+            "action_kind": "DISPATCH_RULE_OVERRIDE",
+            "effective_time": t0,
+            "lot_id": None,
+            "route_id": None,
+            "step_seq": None,
+            "tool_group": tg,
+            "tool_id": None,
+            "payload_json": json.dumps({"tool_group": tg, "dispatch_rule": dispatch_rule}),
+            "source": "AGENT",
+        })
+        seq += 1
+
+    if candidate.params.superhotlot_enable:
+        rows.append({
+            "seq": seq,
+            "action_kind": "DISPATCH_RULE_OVERRIDE",
+            "effective_time": t0,
+            "lot_id": None,
+            "route_id": None,
+            "step_seq": None,
+            "tool_group": tg,
+            "tool_id": None,
+            "payload_json": json.dumps({
+                "tool_group": tg,
+                "dispatch_rule": "superhotlot setupavoidance",
+            }),
+            "source": "AGENT",
+        })
+
+    return rows, release_multiplier
 
 
 def plan_to_action_rows(

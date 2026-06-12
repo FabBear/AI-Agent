@@ -30,6 +30,20 @@ _PARALLEL_WORKERS = int(os.environ.get("SIM_PARALLEL_WORKERS", min(8, os.cpu_cou
 
 _log = get_logger(__name__)
 
+# ── lot 레벨 액션 상수 ─────────────────────────────────────────────────────────
+# 임시값 — 시뮬레이션 검증 후 보정 필요
+#
+# time_to_due 3단계 구간:
+#   > T_WARN              → 변경 없음 (안전)
+#   T_CRITICAL ~ T_WARN  → priority 조정 (경고)
+#   ≤ T_CRITICAL          → superhotlot 지정 (위험)
+_DUE_THRESHOLD_WARN_MIN     = 10080  # 7일: 이 이상이면 안전
+_DUE_THRESHOLD_CRITICAL_MIN =  4320  # 3일: 이 이하면 superhotlot
+
+_PRIORITY_UP          = 20   # 경고 구간 UP → HotLot 수준
+_PRIORITY_DOWN        =  5   # 안전 구간 DOWN → Regular 미만
+_PRIORITY_SUPERHOTLOT = 30   # 위험 구간 → SuperHotLot 수준
+
 _DOCKER_SIM_ROOT = Path("/app/simulation")
 _LOCAL_SIM_ROOT = Path(__file__).parent.parent.parent.parent / "Simulation" / "simulation"
 _IS_DOCKER = _DOCKER_SIM_ROOT.is_dir()
@@ -218,6 +232,99 @@ def _copy_snapshots(
         session.close()
 
 
+def _query_queued_lots(scenario_id: str, tool_group: str) -> list[dict]:
+    """whatif 스냅샷에서 해당 TG QUEUE 상태 lot 목록 조회."""
+    session = get_session()
+    try:
+        rows = session.execute(
+            text("""
+                SELECT lot_id, due_date_sim, priority, is_super_hot, route_id
+                FROM mes_wip_snapshot
+                WHERE scenario_id = :sid AND tool_group = :tg AND status = 'QUEUE'
+            """),
+            {"sid": scenario_id, "tg": tool_group},
+        ).fetchall()
+        return [
+            {
+                "lot_id": r[0],
+                "due_date_sim": float(r[1] or 0),
+                "priority": int(r[2] or 0),
+                "is_super_hot": bool(r[3]),
+                "route_id": r[4],
+            }
+            for r in rows
+        ]
+    finally:
+        session.close()
+
+
+def _make_lot_actions(
+    lots: list[dict],
+    t0: float,
+    priority_direction: str | None,
+    superhotlot_enable: bool,
+    tg: str,
+    seq_start: int = 0,
+) -> list[dict]:
+    """lot별 LOT_PRIORITY / SET_SUPER_HOT action rows 생성.
+
+    time_to_due = due_date_sim - t0 기준 3구간:
+      > T_WARN              → 변경 없음 (안전)
+      T_CRITICAL ~ T_WARN  → priority 조정 (경고)
+      ≤ T_CRITICAL          → SET_SUPER_HOT + priority 30 (위험)
+
+    priority_direction "DOWN" 일 때는 반대로 안전 구간 lot을 후순위로 낮춤.
+    superhotlot_enable=False 이면 superhotlot 구간도 priority 조정만.
+    """
+    rows: list[dict] = []
+    seq = seq_start
+
+    for lot in lots:
+        lot_id = lot["lot_id"]
+        time_to_due = lot["due_date_sim"] - t0
+
+        if priority_direction == "UP" or superhotlot_enable:
+            # 위험 구간: 납기 임박 → superhotlot_enable 여부와 무관하게 항상 SET_SUPER_HOT
+            if time_to_due <= _DUE_THRESHOLD_CRITICAL_MIN:
+                rows.append({
+                    "seq": seq, "action_kind": "SET_SUPER_HOT",
+                    "effective_time": t0, "lot_id": lot_id,
+                    "route_id": lot.get("route_id"), "step_seq": None,
+                    "tool_group": tg, "tool_id": None,
+                    "payload_json": json.dumps({"super_hot": True}),
+                    "source": "AGENT",
+                })
+                seq += 1
+
+            # 경고 구간: priority UP만 (superhotlot 대상 아님)
+            elif time_to_due <= _DUE_THRESHOLD_WARN_MIN and priority_direction == "UP":
+                rows.append({
+                    "seq": seq, "action_kind": "LOT_PRIORITY",
+                    "effective_time": t0, "lot_id": lot_id,
+                    "route_id": lot.get("route_id"), "step_seq": None,
+                    "tool_group": tg, "tool_id": None,
+                    "payload_json": json.dumps({"priority": _PRIORITY_UP}),
+                    "source": "AGENT",
+                })
+                seq += 1
+            # 안전 구간: 변경 없음
+
+        elif priority_direction == "DOWN":
+            # DOWN은 반대: 안전 구간(여유 있는) lot을 후순위로
+            if time_to_due > _DUE_THRESHOLD_WARN_MIN:
+                rows.append({
+                    "seq": seq, "action_kind": "LOT_PRIORITY",
+                    "effective_time": t0, "lot_id": lot_id,
+                    "route_id": lot.get("route_id"), "step_seq": None,
+                    "tool_group": tg, "tool_id": None,
+                    "payload_json": json.dumps({"priority": _PRIORITY_DOWN}),
+                    "source": "AGENT",
+                })
+                seq += 1
+
+    return rows
+
+
 def _insert_whatif_actions(scenario_id: str, action_rows: list[dict]) -> None:
     if not action_rows:
         return
@@ -288,6 +395,7 @@ def run_whatif_paired(
     action_rows: list[dict],
     release_interval_multiplier: float,
     label: str,
+    lot_action_config: dict | None = None,
 ) -> tuple[str, list[dict], str]:
     """
     WHATIF 30회 paired 실행 (seed=baseline 런과 동일).
@@ -332,7 +440,24 @@ def run_whatif_paired(
         try:
             _create_whatif_scenario(whatif_id, t0, horizon_min, baseline_id)
             _copy_snapshots(baseline_id, whatif_id, release_interval_multiplier)
-            _insert_whatif_actions(whatif_id, action_rows)
+
+            all_actions = list(action_rows)
+            if lot_action_config:
+                tg = lot_action_config.get("target_tg", "")
+                queued_lots = _query_queued_lots(whatif_id, tg) if tg else []
+                if queued_lots:
+                    lot_rows = _make_lot_actions(
+                        lots=queued_lots,
+                        t0=t0,
+                        priority_direction=lot_action_config.get("priority_direction"),
+                        superhotlot_enable=lot_action_config.get("superhotlot_enable", False),
+                        tg=tg,
+                        seq_start=len(all_actions),
+                    )
+                    all_actions.extend(lot_rows)
+                    _log.info(f"[Exec] {whatif_id}: lot 레벨 action {len(lot_rows)}개 추가 ({len(queued_lots)}개 QUEUE lot)")
+
+            _insert_whatif_actions(whatif_id, all_actions)
             _promote_to_validated(whatif_id)
         except Exception as e:
             _log.error(f"[Exec] run_{run_index:02d} DB 셋업 실패: {e}")

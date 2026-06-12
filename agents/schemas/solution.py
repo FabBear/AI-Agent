@@ -38,8 +38,6 @@ class SolutionCandidate(BaseModel):
     name: str = ""
     target_kpi: str = "q_time_min"
     params: SimParamDelta = Field(default_factory=SimParamDelta)
-    expected_effect: str = ""
-    rationale: str = ""
 
 
 
