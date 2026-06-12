@@ -136,11 +136,15 @@ def _normalize_minmax(values: list[float], min_spread: float = 0.0) -> list[floa
 
 
 def _confidence(stats: dict) -> float:
+    import math
     p = stats.get("paired_t_p")
     if p is None:
         return 0.5
     try:
-        return max(0.0, min(1.0, 1.0 - float(p)))
+        fp = float(p)
+        if math.isnan(fp):
+            return 0.5
+        return max(0.0, min(1.0, 1.0 - fp))
     except (TypeError, ValueError):
         return 0.5
 
