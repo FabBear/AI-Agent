@@ -62,6 +62,11 @@ def _tg_area(tg: dict[str, Any]) -> str | None:
     return str(tg.get("areaName") or tg.get("areaCode") or "") or None
 
 
+def _area_name(area: dict[str, Any]) -> str | None:
+    value = area.get("areaName") or area.get("areaCode")
+    return str(value) if value else None
+
+
 def _trend(context: dict[str, Any], key: str) -> str | None:
     """trends[key] 12pt 시계열 → '증가/감소/보합'. 데이터 없으면 None."""
     mes = backend_context(context).get("mesCurrent")
@@ -175,8 +180,8 @@ def build_fab_briefing_baseline(req: AgentTaskAgentRequest) -> AgentTaskResult:
         reverse=True,
     )
     top_area = active_areas[0] if active_areas else None
-    top_area_name = str(top_area.get("areaName") or top_area.get("areaCode")) if top_area else None
-    busy_area_names = [str(p.get("areaName") or p.get("areaCode")) for p in active_areas[:5]]
+    top_area_name = _area_name(top_area) if top_area else None
+    busy_area_names = [name for p in active_areas[:5] if (name := _area_name(p))]
     top_tg = max(
         tgs,
         key=lambda t: (to_int(t.get("wipCount")), num(t.get("bottleneckProb")), num(t.get("utilizationRate"))),

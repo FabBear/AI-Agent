@@ -35,6 +35,14 @@ def _top_count_text(items: Any, empty: str = "없음") -> str:
     return ", ".join(parts) if parts else empty
 
 
+def _item_name(item: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = item.get(key)
+        if value:
+            return str(value)
+    return None
+
+
 def _signed_metric(value: Any, suffix: str = "") -> str:
     if value is None:
         return "확인 필요"
@@ -111,8 +119,14 @@ def _build_monthly_report_summary(req: AgentTaskAgentRequest, date_range: dict[s
         ],
         propagation=Propagation(
             summary="반복 등장하는 Area/TG는 다음 월 운영 회의에서 구조적 병목 후보로 분리해 봐야 합니다.",
-            affectedProcesses=[str(item.get("name")) for item in top_areas[:5] if isinstance(item, dict) and item.get("name")],
-            affectedToolGroups=[str(item.get("name")) for item in top_tgs[:8] if isinstance(item, dict) and item.get("name")],
+            affectedProcesses=[
+                name for item in top_areas[:5]
+                if isinstance(item, dict) and (name := _item_name(item, "name", "areaName"))
+            ],
+            affectedToolGroups=[
+                name for item in top_tgs[:8]
+                if isinstance(item, dict) and (name := _item_name(item, "name", "tgName"))
+            ],
             horizon=f"{date_range.get('from', '월초')}~{date_range.get('to', '월말')}",
         ),
         responseDirections=[

@@ -115,7 +115,7 @@ class ChatQueryRepository:
                    p.est_throughput_delta, p.est_avg_wait_delta,
                    p.est_delivery_compliance_delta, p.est_delay_delta,
                    p.actual_throughput_delta, p.actual_avg_wait_delta, p.validated_at,
-                   (p.plan_id = h.selected_plan_id) AS selected
+                   COALESCE(p.plan_id = h.selected_plan_id, FALSE) AS selected
             FROM td_action_plan p
             LEFT JOIN LATERAL (
                 SELECT selected_plan_id FROM th_hitl_decision d
