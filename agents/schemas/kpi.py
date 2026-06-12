@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+from typing import Self
+
+from pydantic import BaseModel, Field, model_validator
 
 
 class ToolGroupKPI(BaseModel):
@@ -11,8 +13,10 @@ class ToolGroupKPI(BaseModel):
     setup_ratio_avg: float = Field(ge=0.0, le=1.0)
     utilization_avg: float = Field(ge=0.0, le=1.0)
     max_util: float = Field(ge=0.0, le=1.0)
+    max_avg_q_time: float | None = Field(default=None, ge=0.0)
 
-    @property
-    def max_avg_q_time(self) -> float:
-        """Backward-compatible alias for older repository/agent code."""
-        return self.q_time_min
+    @model_validator(mode="after")
+    def fill_max_avg_q_time(self) -> Self:
+        if self.max_avg_q_time is None:
+            self.max_avg_q_time = self.q_time_min
+        return self

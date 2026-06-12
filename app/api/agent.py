@@ -17,7 +17,7 @@ from app.repositories.agent_step_repository import AgentStepRepository
 from app.services.agent_service import run_pipeline_with_timeout, run_post_hitl
 
 router = APIRouter()
-_USER_TASKS: dict[str, AgentTaskAgentResponse] = {}
+_USER_TASKS: dict[UUID, AgentTaskAgentResponse] = {}
 
 
 class RiskGrade(str, Enum):
@@ -109,7 +109,7 @@ async def create_agent_task(
         response = await build_period_report_response(request)
     else:
         response = await build_fab_briefing_response(request)
-    _USER_TASKS[str(request.task_id)] = response
+    _USER_TASKS[request.task_id] = response
     return response
 
 
@@ -118,7 +118,7 @@ async def get_agent_task(
     task_id: UUID,
     _: Annotated[None, Depends(verify_internal_token)],
 ) -> AgentTaskAgentResponse:
-    response = _USER_TASKS.get(str(task_id))
+    response = _USER_TASKS.get(task_id)
     if response is None:
         return AgentTaskAgentResponse(
             status="FAILED",

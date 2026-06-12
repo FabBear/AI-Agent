@@ -4,6 +4,7 @@ LLM이 도구를 스스로 골라 호출 → 결과 보고 다음 행동 결정 
 도구 호출마다 progress step을 남겨 '에이전트가 판단하는 과정'을 화면에 노출한다.
 LLM 미사용/실패 시 결정론적 baseline으로 graceful degrade(가드레일·데모 안전)."""
 
+import asyncio
 import inspect
 import logging
 from collections.abc import Awaitable, Callable
@@ -83,7 +84,7 @@ async def _exec_and_trace(ctx, tool_fns, tool_labels, call, messages) -> None:
     if fn:
         ctx.tools_used.append(name)
     try:
-        result = fn(**args) if fn else "알 수 없는 도구입니다."
+        result = await _call_tool(fn, args) if fn else "알 수 없는 도구입니다."
         if inspect.isawaitable(result):
             result = await result
     except Exception:  # noqa: BLE001 - 도구 한 건 실패가 전체를 죽이지 않게.
@@ -93,6 +94,12 @@ async def _exec_and_trace(ctx, tool_fns, tool_labels, call, messages) -> None:
     label = tool_labels.get(name, name or "조회")
     ctx.trace("TOOL_CALL", f"{label} — {_snippet(text)}")
     messages.append(ToolMessage(content=text, tool_call_id=call_id))
+
+
+async def _call_tool(fn, args: dict) -> object:
+    if inspect.iscoroutinefunction(fn):
+        return await fn(**args)
+    return await asyncio.to_thread(fn, **args)
 
 
 def _respond(ctx: TaskContext, result: AgentTaskResult) -> AgentTaskAgentResponse:

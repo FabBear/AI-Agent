@@ -9,6 +9,7 @@ from typing import Any
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
+from agents.agent_task.helpers import num, to_int
 from agents.agent_task.schemas import AgentTaskAgentRequest
 
 DEFAULT_MODEL = "gpt-5.4-mini"
@@ -59,8 +60,11 @@ def make_chat_llm(req: AgentTaskAgentRequest) -> ChatOpenAI:
     return ChatOpenAI(
         model=model,
         api_key=os.getenv("OPENAI_API_KEY"),
-        timeout=float(os.getenv("AGENT_TASK_TIMEOUT_SEC", os.getenv("USER_INVOKED_AGENT_TIMEOUT_SEC", "30"))),
-        max_retries=int(os.getenv("AGENT_TASK_MAX_RETRIES", os.getenv("USER_INVOKED_AGENT_MAX_RETRIES", "1"))),
-        max_completion_tokens=int(os.getenv("AGENT_TASK_MAX_TOKENS", os.getenv("USER_INVOKED_AGENT_MAX_TOKENS", "2000"))),
-        **llm_tuning_kwargs(model, float(os.getenv("AGENT_TASK_TEMPERATURE", os.getenv("USER_INVOKED_AGENT_TEMPERATURE", "0.2")))),
+        timeout=num(os.getenv("AGENT_TASK_TIMEOUT_SEC", os.getenv("USER_INVOKED_AGENT_TIMEOUT_SEC")), 30.0),
+        max_retries=to_int(os.getenv("AGENT_TASK_MAX_RETRIES", os.getenv("USER_INVOKED_AGENT_MAX_RETRIES")), 1),
+        max_completion_tokens=to_int(os.getenv("AGENT_TASK_MAX_TOKENS", os.getenv("USER_INVOKED_AGENT_MAX_TOKENS")), 2000),
+        **llm_tuning_kwargs(
+            model,
+            num(os.getenv("AGENT_TASK_TEMPERATURE", os.getenv("USER_INVOKED_AGENT_TEMPERATURE")), 0.2),
+        ),
     )

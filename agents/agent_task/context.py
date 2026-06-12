@@ -5,10 +5,13 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from agents.agent_task.schemas import AgentTaskAgentRequest, AgentTaskProgressStep
+
+if TYPE_CHECKING:
+    from app.repositories.chat_query_repository import ChatQueryRepository
 
 
 @dataclass
@@ -43,11 +46,11 @@ class TaskContext:
             )
         )
 
-    async def repo(self) -> "object | None":
+    async def repo(self) -> "ChatQueryRepository":
         """조회 전용 ChatQueryRepository(읽기 전용 풀). 요청 내 1회 생성 캐시."""
         if self._repo is None:
             from app.chatbot.db import get_chat_pool
             from app.repositories.chat_query_repository import ChatQueryRepository
 
             self._repo = ChatQueryRepository(await get_chat_pool())
-        return self._repo
+        return cast("ChatQueryRepository", self._repo)
