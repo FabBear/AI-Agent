@@ -25,11 +25,13 @@ def _build_candidate(
     severity: SeverityLevel,
 ) -> SolutionCandidate:
     rank, name = _RANK_META[level]
+    proposed_pct = params_dict["release_interval_delta_pct"]
     clipped_pct = (
-        clip_interval_pct(params_dict["release_interval_delta_pct"], severity)
-        if params_dict["release_interval_delta_pct"] is not None
+        clip_interval_pct(proposed_pct, severity)
+        if proposed_pct is not None
         else None
     )
+
     return SolutionCandidate(
         rank=rank,
         name=name,
@@ -58,19 +60,16 @@ def generate_solutions(state: PipelineState) -> PipelineState:
     for alert in target_alerts:
         cause_report = cause_map[alert.toolgroup]
 
-        # 1. 규칙 엔진: 보수/표준/강화 파라미터 확정
         result = generate_candidates(alert, cause_report)
+        if result is None:  # judgment=None → 대응안 생성 불가
+            continue
 
-        # 2. LLM: 텍스트 생성 (expected_effect + rationale)
         texts = generate_texts(alert, cause_report, result)
-
-        # 3. post-processing clip + SolutionCandidate 조립
         candidates = [
             _build_candidate(lv, result[lv], texts, alert.severity)
             for lv in ("conservative", "standard", "aggressive")
         ]
 
-        # HITL 에스컬레이션 플래그는 rationale에 포함
         if result.get("hitl_escalation_recommended"):
             reason = result.get("escalation_reason", "")
             for c in candidates:

@@ -208,7 +208,7 @@ _BN_KPI_MAP = {
 def _build_meta(ci: dict) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
-        "scenario_type": ci.get("scenario_type", "per_tg"),
+        "scenario_type": ci.get("scenario_type", "global_plan"),
         "scenario_name": ci.get("scenario_name", ci.get("process_name", "")),
         "anchor_toolgroup": ci.get("anchor_toolgroup", ci.get("toolgroup", "")),
         "target_toolgroups": list(ci.get("target_toolgroups") or [ci.get("toolgroup", "")]),
@@ -643,14 +643,12 @@ def compare_rank(state: "PipelineState") -> dict:
 
     alerts = state.get("alerts", [])
     kpi_snapshot = state.get("kpi_snapshot", [])
-    alert_map = {a.toolgroup: a for a in alerts}
     kpi_map = {k.toolgroup: k for k in kpi_snapshot}
     t0 = kpi_snapshot[0].snapshot_time if kpi_snapshot else 0.0
 
     compare_inputs: list[dict] = []
 
     global_plan_groups = [g for g in verification_results if "plan_id" in g]
-    per_tg_groups = [g for g in verification_results if "plan_id" not in g]
 
     if global_plan_groups:
         from agents.schemas.alert import SeverityLevel
@@ -687,40 +685,6 @@ def compare_rank(state: "PipelineState") -> dict:
                 "scored_actions": scored,
                 "decision_info": decision_info,
             })
-
-    for result_group in per_tg_groups:
-        verified_candidates = result_group.get("verified_candidates", [])
-        if not verified_candidates:
-            _log.warning("[Compare] verified_candidates 없음 — 스킵")
-            continue
-
-        tg = result_group["toolgroup"]
-        alert = alert_map.get(tg)
-        if alert is None:
-            _log.warning(f"[Compare] {tg}: alert 없음 — 스킵")
-            continue
-
-        candidates = _build_action_candidates(verified_candidates)
-        candidates, scored, decision_info = _rank_candidates(candidates)
-
-        compare_inputs.append({
-            "toolgroup": tg,
-            "process_name": tg,
-            "scenario_type": "per_tg",
-            "scenario_name": tg,
-            "anchor_toolgroup": tg,
-            "target_toolgroups": [tg],
-            "severity": result_group.get("severity", alert.severity.value),
-            "snapshot_time": float(result_group.get("snapshot_time", t0)),
-            "t0": float(t0),
-            "horizon_min": HORIZON_MIN,
-            "bottleneck_info": _build_bottleneck_info(tg, alert, kpi_map.get(tg)),
-            "cascade_impact": alert.impact.model_dump(),
-            "cause_context": _build_cause_context(tg, state.get("cause_reports", [])),
-            "action_candidates": candidates,
-            "scored_actions": scored,
-            "decision_info": decision_info,
-        })
 
     _log.info(f"[Compare] rank 완료 — {len(compare_inputs)}개 공정")
     return {"compare_inputs": compare_inputs}
@@ -774,8 +738,17 @@ def compare_llm(state: "PipelineState") -> dict:
         cause = _build_cause_block(ci)
         cascade = _build_cascade_block(ci)
         action_options = [_build_current_state_option(ci, current_state["kpi"])]
+        scored_map = {
+            s["label"]: s
+            for s in ci.get("scored_actions", [])
+            if isinstance(s, dict) and s.get("label")
+        }
         for c in candidates:
-            action_options.append(_build_action_option(c, current_state["kpi"], decision_info))
+            opt = _build_action_option(c, current_state["kpi"], decision_info)
+            scored = scored_map.get(c["label"], {})
+            if scored.get("badge") and not opt.get("badge"):
+                opt["badge"] = scored["badge"]
+            action_options.append(opt)
         recommendation = _build_recommendation_block(recommendation_obj, decision_info, top_candidate)
         decision_meta = _build_decision_meta(decision_info)
 
@@ -928,6 +901,7 @@ def _hitl_auto(compare_formatted: list[dict], _log) -> dict:
             "approved_at": now,
             "comment": "자동 승인 (AUTO_APPROVE 모드)",
             "rejection_reason": None,
+            "selected_label": rec_label,
         }
         compare_results.append(_build_compare_result(cf, approval_info))
         _log.info(f"[Compare] {tg} AUTO-APPROVE 완료")
@@ -974,6 +948,7 @@ def _hitl_terminal(compare_formatted: list[dict], _log) -> dict:
                 "approved_at": now,
                 "comment": comment,
                 "rejection_reason": None,
+                "selected_label": raw,
             }
 
         compare_results.append(_build_compare_result(cf, approval_info))

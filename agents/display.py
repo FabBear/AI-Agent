@@ -146,23 +146,27 @@ def print_solutions(solutions: list[dict]) -> None:
     if not solutions:
         return
     print("=" * 70)
-    print("  대응안 생성 결과 (Lot Release 테이블 조정)")
+    print("  대응안 생성 결과")
     print("=" * 70)
-    for plan in solutions:
-        plan_id = plan["plan_id"]
-        cur = plan.get("current_interval_minutes", 0.0)
-        interval = plan["release_interval_minutes"]
-        priority = plan.get("lot_priority_rule") or "변경 없음"
-        superhotlot = "활성화" if plan.get("superhotlot_enable") else "비활성화"
-        tgs = plan.get("target_toolgroups", [])
-        print(f"\n▶ 플랜 {plan_id}")
-        print(f"   Release Interval : {cur:.1f}분 → {interval:.1f}분  (+{interval - cur:.1f}분)")
-        print(f"   투입 우선순위     : {priority} 적용")
-        print(f"   SUPERHOTLOT      : {superhotlot}  (대상: {', '.join(tgs) if tgs else '없음'} 통과 대기 lot)")
-
-        effect = plan.get("expected_effect") or plan.get("description", "")
-        if effect:
-            print(f"   기대 효과: {effect[:200]}")
+    for entry in solutions:
+        tg = entry.get("toolgroup", "-")
+        candidates = entry.get("candidates", [])
+        print(f"\n▶ {tg}  ({len(candidates)}개 후보)")
+        for c in candidates:
+            rank = c.get("rank", "-")
+            name = c.get("name", "")
+            params = c.get("params", {})
+            delta_pct = params.get("release_interval_delta_pct")
+            priority = params.get("lot_priority_rule") or params.get("priority_direction") or "변경 없음"
+            superhotlot = "활성화" if params.get("superhotlot_enable") else "비활성화"
+            effect = c.get("expected_effect", "")
+            delta_str = f"{delta_pct:+.1f}%" if delta_pct is not None else "변경 없음"
+            print(f"  [{rank}] {name}")
+            print(f"      Release Interval 조정 : {delta_str}")
+            print(f"      투입 우선순위          : {priority}")
+            print(f"      SUPERHOTLOT           : {superhotlot}")
+            if effect:
+                print(f"      기대 효과             : {effect[:200]}")
         print("─" * 70)
 
 

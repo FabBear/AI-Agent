@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from agents.schemas.alert import SeverityLevel
+
 
 class SHAPFeature(BaseModel):
     feature: str
@@ -106,6 +108,14 @@ class ConsensusResult(BaseModel):
     g_star_toolgroups_all: list[str] = []
     confidence_level: str = "LOW"
     summary: str = ""
+
+
+class CauseSummary(BaseModel):
+    """원인분석 에이전트 → 대응안 에이전트 전달용 최소 인터페이스."""
+
+    toolgroup: str
+    primary_category: str
+    severity: SeverityLevel
 
 
 class CauseReport(BaseModel):

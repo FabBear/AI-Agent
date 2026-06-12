@@ -1,9 +1,6 @@
 """LangGraph 노드: solution_candidates → verification_results.
 
-각 대응안 후보(rank 1~3)에 대해 WHATIF 시뮬 30회 paired 실행:
-  - seed = baseline 런과 동일 (runs_manifest.csv 기준)
-  - D_i = whatif_i − baseline_i per KPI per pair
-  - paired t-test → p-value, 95% CI, verdict
+GlobalSolutionPlan 또는 per-TG SolutionCandidate 각각에 대해 WHATIF 시뮬을 paired 실행한다.
 """
 
 from __future__ import annotations
@@ -53,30 +50,34 @@ def _verify_candidates(
                 action_rows=action_rows,
                 release_interval_multiplier=release_multiplier,
                 label=f"{alert.toolgroup}_{label}",
+                lot_action_config={
+                    "target_tg": alert.toolgroup,
+                    "priority_direction": candidate.params.priority_direction,
+                    "superhotlot_enable": candidate.params.superhotlot_enable,
+                },
             )
         except Exception as e:
             _log.error(f"[Verify] {alert.toolgroup} {label} 시뮬 실패: {e}")
             continue
 
-        # D_i = whatif_i − baseline_i, KPI별 30쌍
         kpi_deltas = compute_paired_deltas(pairs, alert.toolgroup)
 
-        # KPI별 paired t-test 통계
         kpi_stats: dict[str, dict] = {}
         for kpi_name, deltas in kpi_deltas.items():
             if len(deltas) >= 2:
                 kpi_stats[kpi_name] = compute_paired_stats(deltas)
 
-        # target KPI 기준 주요 통계
         target_stats = kpi_stats.get(candidate.target_kpi, {})
 
         params_meta = {
             "target_toolgroups": [alert.toolgroup],
             "release_interval_delta_pct": candidate.params.release_interval_delta_pct,
+            "priority_direction": candidate.params.priority_direction,
             "lot_priority_rule": candidate.params.lot_priority_rule,
             "dispatch_rule": candidate.params.dispatch_rule,
             "superhotlot_enable": candidate.params.superhotlot_enable,
             "expected_effect": candidate.expected_effect,
+            "rationale": candidate.rationale,
         }
 
         verified.append({
@@ -104,7 +105,6 @@ def _verify_global_plans(
     t0: float,
 ) -> list[dict]:
     """GlobalSolutionPlan A/B 각각을 30회 paired 시뮬로 검증."""
-    # anchor TG: CRITICAL 중 composite_score 최고인 툴그룹
     critical_alerts = [a for a in alerts if a.severity == SeverityLevel.CRITICAL]
     anchor_alert = max(critical_alerts, key=lambda a: a.composite_score) if critical_alerts else None
     if anchor_alert is None:
@@ -138,7 +138,6 @@ def _verify_global_plans(
             _log.error(f"[Verify] 플랜 {plan.plan_id} 시뮬 실패: {e}")
             continue
 
-        # anchor TG 기준으로 KPI delta 산출
         kpi_deltas = compute_paired_deltas(pairs, anchor_alert.toolgroup)
         kpi_stats: dict[str, dict] = {}
         for kpi_name, deltas in kpi_deltas.items():
@@ -200,13 +199,11 @@ def verify_solutions(state: PipelineState) -> PipelineState:
         _log.error("[Verify] baseline 시나리오 없음 — 전체 스킵")
         return {**state, "verification_results": []}
 
-    # GlobalSolutionPlan 포맷 (plan_id 키 존재) → 플랜별 통합 시뮬
     if "plan_id" in solution_candidates[0]:
         return {**state, "verification_results": _verify_global_plans(
             solution_candidates, alerts, t0,
         )}
 
-    # 기존 per-TG 포맷
     alert_map = {a.toolgroup: a for a in alerts}
     results: list[dict] = []
 

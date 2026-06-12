@@ -24,6 +24,9 @@ _log = get_logger(__name__)
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 _MAX_TOKENS = 1000
+_MAX_INPUT_TOKENS_ESTIMATE = 2500  # 초과 시 프롬프트 축약
+_MAX_CATEGORIES_IN_PROMPT = 4
+_MAX_FEATS_PER_CATEGORY = 3
 
 _SYSTEM = """당신은 반도체 FAB 병목 원인 판정 전문가입니다.
 카테고리별 수렴 증거를 보고 실제 root cause 카테고리를 판정합니다.
@@ -41,6 +44,13 @@ def _build_prompt(
 ) -> str:
     retry_note = f"\n※ 재시도 #{retry_n} — 더 긴 window 데이터 반영됨.\n" if retry_n > 0 else ""
 
+    # 입력 토큰 가드레일: categories 수 상한
+    if len(categories) > _MAX_CATEGORIES_IN_PROMPT:
+        _log.debug(
+            f"[llm_judge] {toolgroup} categories {len(categories)}개 → 상위 {_MAX_CATEGORIES_IN_PROMPT}개로 축약"
+        )
+        categories = categories[:_MAX_CATEGORIES_IN_PROMPT]
+
     # 카테고리 섹션 (핵심 판정 근거)
     cat_lines = []
     symbols = "①②③④⑤⑥"
@@ -56,7 +66,7 @@ def _build_prompt(
             extras.append("업스트림=있음")
 
         feat_details = []
-        for fn in cat.features:
+        for fn in cat.features[:_MAX_FEATS_PER_CATEGORY]:  # 카테고리당 피처 상한
             ev = feat_map.get(fn)
             if not ev:
                 continue
@@ -155,6 +165,20 @@ def _call_openai(
         toolgroup, evidence_bundle, categories,
         upstream_suspects, sim_forecast, g_star, retry_n,
     )
+
+    try:
+        import tiktoken
+        encoding = tiktoken.encoding_for_model(config.LLM_MODEL)
+        estimated_tokens = len(encoding.encode(prompt))
+    except Exception:
+        estimated_tokens = int(len(prompt) * 1.2)
+    if estimated_tokens > _MAX_INPUT_TOKENS_ESTIMATE:
+        _log.warning(
+            f"[llm_judge] {toolgroup} 프롬프트 추정 토큰 {estimated_tokens} > {_MAX_INPUT_TOKENS_ESTIMATE} "
+            f"— 룰 기반으로 대체"
+        )
+        return None
+
     try:
         from openai import APIError, OpenAI, RateLimitError
         client = OpenAI(api_key=api_key)

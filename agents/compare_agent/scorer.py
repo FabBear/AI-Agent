@@ -156,20 +156,13 @@ def _action_effort(candidate: dict) -> int:
 def _tiebreaker_release_interval(candidate: dict) -> float:
     """Release Interval 변동폭 절대값 — 작을수록 운영 충격 적음.
 
-    plan_meta에 release_interval_delta_min(글로벌 플랜)이 있으면 절대값 사용.
-    release_interval_delta_pct(per-TG)는 절대값 사용. 둘 다 없으면 999.
+    plan_meta에 release_interval_delta_min이 있으면 절대값 사용. 없으면 999.
     """
     pm = candidate.get("plan_meta") or {}
     delta_min = pm.get("release_interval_delta_min")
     if delta_min is not None:
         try:
             return abs(float(delta_min))
-        except (TypeError, ValueError):
-            pass
-    delta_pct = pm.get("release_interval_delta_pct")
-    if delta_pct is not None:
-        try:
-            return abs(float(delta_pct))
         except (TypeError, ValueError):
             pass
     return 999.0
