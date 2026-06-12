@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 RULES_PATH = Path(__file__).with_name("stt_correction_rules.json")
 FUZZY_CONFIDENCE_THRESHOLD = 0.55
 FUZZY_SCORE_CUTOFF = 0.86
+MAX_ALIAS_COMBINATIONS = 1024
+MAX_ALIASES_PER_PART = 8
+REDUCED_ALIASES_PER_PART = 2
 
 DEFAULT_KOREAN_FIXES: tuple[tuple[str, str], ...] = (
     (r"가장\s*먼저\s*봐야\s*할\s*트렌드(?:가|는|은)?", "가장 먼저 봐야 할 툴그룹"),
@@ -235,7 +238,11 @@ def _term_alias_phrases(term: str) -> tuple[str, ...]:
     if all(phrase_parts):
         phrases.add(" ".join(variants[0] for variants in phrase_parts))
         phrases.add("".join(variants[0] for variants in phrase_parts))
-        for combo in product(*(variants[:8] for variants in phrase_parts)):
+        total_combinations = 1
+        for variants in phrase_parts:
+            total_combinations *= min(len(variants), MAX_ALIASES_PER_PART)
+        limit = REDUCED_ALIASES_PER_PART if total_combinations > MAX_ALIAS_COMBINATIONS else MAX_ALIASES_PER_PART
+        for combo in product(*(variants[:limit] for variants in phrase_parts)):
             phrases.add(" ".join(combo))
             phrases.add("".join(combo))
     return tuple(sorted(phrases, key=len, reverse=True))
