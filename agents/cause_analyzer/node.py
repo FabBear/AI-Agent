@@ -30,7 +30,7 @@ from agents.schemas.cause import (
 )
 from agents.state import PipelineState
 
-_ANALYZE_SEVERITIES = {SeverityLevel.CRITICAL, SeverityLevel.HIGH}
+_ANALYZE_SEVERITIES = {SeverityLevel.CRITICAL}
 _MAX_RETRIES = 2
 
 _log = get_logger(__name__)
@@ -100,7 +100,24 @@ def analyze_cause(
             g_star.kpi_evidence.get(tg, []) if g_star and g_star.kpi_evidence else []
         )
 
-        # ── 4. 트렌드 + Evidence Aggregation + LLM Judge (재시도 루프)
+        # ── 4. Forward 시뮬레이션 비교 (evidence scoring에 사용)
+        sim_forecast: SimForecast | None = None
+        future_kpi = forward_kpis.get(tg)
+        if future_kpi is not None:
+            from agents.sim_runner.forecaster import compare_kpis
+            comparison = compare_kpis(kpi, future_kpi)
+            kpi_delta = {k: KpiComparison(**v) for k, v in comparison.items()}
+            gets_worse = any(
+                v.pct_change > 5 for k, v in kpi_delta.items() if k in ("wip", "wait_ratio")
+            )
+            sim_forecast = SimForecast(
+                t0=snapshot_time,
+                t_future=future_kpi.snapshot_time,
+                kpi_delta=kpi_delta,
+                gets_worse=gets_worse,
+            )
+
+        # ── 5. 트렌드 + Evidence Aggregation + LLM Judge (재시도 루프)
         trend_top = get_trend_top(window, tg, top_n=3)
         evidence_bundle = []
         categories = []
@@ -108,7 +125,7 @@ def analyze_cause(
 
         for retry_n in range(_MAX_RETRIES + 1):
             evidence_bundle, categories = aggregate_evidence(
-                shap_top, trend_top, upstream_suspects, tg_g_star_evidence
+                shap_top, trend_top, upstream_suspects, tg_g_star_evidence, sim_forecast
             )
             judgment = judge(
                 tg, evidence_bundle, categories, upstream_suspects,
@@ -130,23 +147,6 @@ def analyze_cause(
             window_r = load_kpi_window(snapshot_time, n_snapshots=n_snaps)
             trend_top = get_trend_top(window_r, tg, top_n=5)
             upstream_suspects = find_upstream_suspects(G, tg, kpi_map, max_hops=n_hops)
-
-        # ── 5. Forward 시뮬레이션 비교
-        sim_forecast: SimForecast | None = None
-        future_kpi = forward_kpis.get(tg)
-        if future_kpi is not None:
-            from agents.sim_runner.forecaster import compare_kpis
-            comparison = compare_kpis(kpi, future_kpi)
-            kpi_delta = {k: KpiComparison(**v) for k, v in comparison.items()}
-            gets_worse = any(
-                v.pct_change > 5 for k, v in kpi_delta.items() if k in ("wip", "wait_ratio")
-            )
-            sim_forecast = SimForecast(
-                t0=snapshot_time,
-                t_future=future_kpi.snapshot_time,
-                kpi_delta=kpi_delta,
-                gets_worse=gets_worse,
-            )
 
         # ── 6. ConsensusResult 역호환 구성
         g_star_set = set(g_star.toolgroups if g_star else [])
