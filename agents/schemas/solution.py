@@ -3,6 +3,24 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class TGAction(BaseModel):
+    """TG별 dispatch rule 변경 액션."""
+
+    toolgroup: str
+    dispatch_rule: str | None = None  # "superhotlot setupavoidance" | "setupavoidance" | "EDD" | None
+
+
+class SolutionPlan(BaseModel):
+    """원인 카테고리 기반 대응 플랜 (Plan A / B / C)."""
+
+    plan_id: str                            # "A" | "B" | "C"
+    global_interval_delta_pct: float        # 미래 lot 투입 간격 증가율 (%, FAB 전체)
+    per_tg_actions: list[TGAction]          # TG별 dispatch rule (원인 기반)
+    hitl_escalation: bool = False           # 설비_고장 TG 있으면 True
+    description: str = ""
+    expected_effect: str = ""
+
+
 class SimParamDelta(BaseModel):
     """WHATIF 시뮬레이션에 적용할 파라미터 변화량."""
 
