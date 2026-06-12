@@ -38,6 +38,7 @@ dependencies = [
     "gymnasium>=0.29.0",
     "uvicorn[standard]>=0.29.0",
     "xgboost>=3.2.0",
+    "faster-whisper>=1.2.1",
 ]
 
 [dependency-groups]
