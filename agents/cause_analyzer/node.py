@@ -108,7 +108,9 @@ def analyze_cause(
             comparison = compare_kpis(kpi, future_kpi)
             kpi_delta = {k: KpiComparison(**v) for k, v in comparison.items()}
             gets_worse = any(
-                v.pct_change > 5 for k, v in kpi_delta.items() if k in ("wip", "wait_ratio")
+                (v.pct_change < -5 if k == "available_tool_ratio" else v.pct_change > 5)
+                for k, v in kpi_delta.items()
+                if k in ("wip", "wait_ratio", "available_tool_ratio")
             )
             sim_forecast = SimForecast(
                 t0=snapshot_time,

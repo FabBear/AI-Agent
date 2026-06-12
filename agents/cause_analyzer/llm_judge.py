@@ -166,7 +166,12 @@ def _call_openai(
         upstream_suspects, sim_forecast, g_star, retry_n,
     )
 
-    estimated_tokens = len(prompt) // 4
+    try:
+        import tiktoken
+        encoding = tiktoken.encoding_for_model(config.LLM_MODEL)
+        estimated_tokens = len(encoding.encode(prompt))
+    except Exception:
+        estimated_tokens = int(len(prompt) * 1.2)
     if estimated_tokens > _MAX_INPUT_TOKENS_ESTIMATE:
         _log.warning(
             f"[llm_judge] {toolgroup} 프롬프트 추정 토큰 {estimated_tokens} > {_MAX_INPUT_TOKENS_ESTIMATE} "
