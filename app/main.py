@@ -9,6 +9,8 @@ from fastapi.exceptions import RequestValidationError
 from app.api.agent import router as agent_router
 from app.api.chat import router as chat_router
 from app.api.ml import router as ml_router
+from app.api.voice import preload_model as preload_stt_model
+from app.api.voice import router as voice_router
 from app.common.errors import (
     AppError,
     app_error_handler,
@@ -22,6 +24,7 @@ from app.services.spring_client import close_spring_client
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await get_pool()
+    preload_stt_model()
     try:
         yield
     finally:
@@ -41,6 +44,7 @@ app.add_exception_handler(Exception, unhandled_error_handler)
 app.include_router(agent_router, prefix="/api/agent", tags=["agent"])
 app.include_router(ml_router, prefix="/api/ml", tags=["ml"])
 app.include_router(chat_router, prefix="/api/chat", tags=["chat"])
+app.include_router(voice_router, prefix="/api/voice", tags=["voice"])
 
 
 @app.get("/health")
