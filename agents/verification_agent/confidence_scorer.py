@@ -52,8 +52,10 @@ def compute_paired_stats(deltas: list[float]) -> dict:
     ci_lo, ci_hi = mean_d, mean_d
 
     if _HAS_SCIPY and n >= 2:
+        import math
         res = ttest_1samp(deltas, popmean=0.0)
-        p_val = float(res.pvalue)
+        raw_p = float(res.pvalue)
+        p_val = None if math.isnan(raw_p) else raw_p
         if std_dev > 0:
             tcrit = float(student_t.ppf(0.975, n - 1))
             margin = tcrit * std_dev / (n ** 0.5)
