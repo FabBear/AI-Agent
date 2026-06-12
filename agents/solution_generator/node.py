@@ -19,11 +19,7 @@ _RANK_META = {
 
 def _build_candidate(level: str, params_dict: dict) -> SolutionCandidate:
     rank, name = _RANK_META[level]
-    clipped_pct = (
-        clip_interval_pct(params_dict["release_interval_delta_pct"])
-        if params_dict["release_interval_delta_pct"] is not None
-        else None
-    )
+    clipped_pct = clip_interval_pct(params_dict["release_interval_delta_pct"])
     return SolutionCandidate(
         rank=rank,
         name=name,

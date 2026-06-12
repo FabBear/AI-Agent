@@ -98,11 +98,7 @@ def _resolve_pct(pct_level: str, plan_level: str) -> float:
     return _RELEASE_PCT["aggressive"]
 
 
-def _check_superhotlot(
-    alert: BottleneckAlert,
-    plan_level: str,
-    eligible: bool,
-) -> bool:
+def _check_superhotlot(alert: BottleneckAlert, eligible: bool) -> bool:
     """SUPERHOTLOT 활성화 여부.
 
     eligible=False이면 즉시 False.
@@ -216,7 +212,7 @@ def generate_candidates(
     params: dict[str, dict] = {}
     for lv in _PLAN_LEVELS:
         pct = _resolve_pct(rule["pct_level"], lv)
-        superhotlot = _check_superhotlot(alert, lv, rule["superhotlot_eligible"][lv])
+        superhotlot = _check_superhotlot(alert, rule["superhotlot_eligible"][lv])
         params[lv] = {
             "release_interval_delta_pct": pct,
             "priority_direction": rule["priority"][lv],

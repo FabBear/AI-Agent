@@ -283,21 +283,21 @@ def _make_lot_actions(
         lot_id = lot["lot_id"]
         time_to_due = lot["due_date_sim"] - t0
 
-        if priority_direction == "UP" or superhotlot_enable:
-            # 위험 구간: 납기 임박 → superhotlot_enable 여부와 무관하게 항상 SET_SUPER_HOT
-            if time_to_due <= _DUE_THRESHOLD_CRITICAL_MIN:
-                rows.append({
-                    "seq": seq, "action_kind": "SET_SUPER_HOT",
-                    "effective_time": t0, "lot_id": lot_id,
-                    "route_id": lot.get("route_id"), "step_seq": None,
-                    "tool_group": tg, "tool_id": None,
-                    "payload_json": json.dumps({"super_hot": True}),
-                    "source": "AGENT",
-                })
-                seq += 1
+        # 위험 구간: 납기 임박 → 항상 SET_SUPER_HOT (superhotlot_enable 무관)
+        if time_to_due <= _DUE_THRESHOLD_CRITICAL_MIN:
+            rows.append({
+                "seq": seq, "action_kind": "SET_SUPER_HOT",
+                "effective_time": t0, "lot_id": lot_id,
+                "route_id": lot.get("route_id"), "step_seq": None,
+                "tool_group": tg, "tool_id": None,
+                "payload_json": json.dumps({"super_hot": True}),
+                "source": "AGENT",
+            })
+            seq += 1
 
-            # 경고 구간: priority UP만 (superhotlot 대상 아님)
-            elif time_to_due <= _DUE_THRESHOLD_WARN_MIN and priority_direction == "UP":
+        # 경고 구간: UP일 때만 priority 조정
+        elif time_to_due <= _DUE_THRESHOLD_WARN_MIN:
+            if priority_direction == "UP":
                 rows.append({
                     "seq": seq, "action_kind": "LOT_PRIORITY",
                     "effective_time": t0, "lot_id": lot_id,
@@ -307,11 +307,10 @@ def _make_lot_actions(
                     "source": "AGENT",
                 })
                 seq += 1
-            # 안전 구간: 변경 없음
 
-        elif priority_direction == "DOWN":
-            # DOWN은 반대: 안전 구간(여유 있는) lot을 후순위로
-            if time_to_due > _DUE_THRESHOLD_WARN_MIN:
+        # 안전 구간: DOWN일 때 후순위
+        else:
+            if priority_direction == "DOWN":
                 rows.append({
                     "seq": seq, "action_kind": "LOT_PRIORITY",
                     "effective_time": t0, "lot_id": lot_id,
