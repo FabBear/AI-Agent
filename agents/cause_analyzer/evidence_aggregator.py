@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from agents.cause_analyzer.g_star_loader import KpiEvidence
-from agents.schemas.cause import CauseCategory, FeatureEvidence, SHAPFeature, TrendInsight
+from agents.schemas.cause import CauseCategory, FeatureEvidence, SHAPFeature, SimForecast, TrendInsight
 
 _INVERSE_KPI = {"available_tool_ratio"}
 _UPSTREAM_CAPACITY_FEATURES = {"wip", "wait_ratio", "available_tool_ratio", "q_time_min"}
@@ -54,6 +54,7 @@ def aggregate_evidence(
     trend_top: list[TrendInsight],
     upstream_suspects: list[str],
     g_star_kpi_evidence: list[KpiEvidence],
+    sim_forecast: SimForecast | None = None,
 ) -> tuple[list[FeatureEvidence], list[CauseCategory]]:
     """
     Returns:
@@ -81,6 +82,9 @@ def aggregate_evidence(
     for f in shap_top:        all_features.add(f.feature)
     for t in trend_top:       all_features.add(t.feature)
     for e in g_star_norm:     all_features.add(e.kpi)
+    if sim_forecast:
+        for feat in sim_forecast.kpi_delta:
+            all_features.add(feat)
 
     features: list[FeatureEvidence] = []
     for feat in all_features:
@@ -123,9 +127,22 @@ def aggregate_evidence(
         if feat in g_star_map:
             e = g_star_map[feat]
             g_star_p_value = e.t_p_adj
-            g_star_significant = e.significant
-            if e.significant:
-                score += 0.5
+            g_star_significant = e.t_p_adj <= 0.05
+            if g_star_significant:
+                direction_ok = (
+                    e.delta_mean < 0 if feat in _INVERSE_KPI else e.delta_mean > 0
+                )
+                if direction_ok:
+                    score += (0.05 - e.t_p_adj) / 0.05 * 0.5
+                    votes += 1
+
+        if sim_forecast and feat in sim_forecast.kpi_delta:
+            cmp = sim_forecast.kpi_delta[feat]
+            is_worsening = (
+                cmp.pct_change < 0 if feat in _INVERSE_KPI else cmp.pct_change > 0
+            )
+            if is_worsening and abs(cmp.pct_change) > 5.0:
+                score += min(abs(cmp.pct_change) / 100.0, 0.3)
                 votes += 1
 
         confidence = "HIGH" if score >= 0.5 else "MEDIUM" if score >= 0.15 else "LOW"
