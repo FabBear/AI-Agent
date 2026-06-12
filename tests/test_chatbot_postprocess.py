@@ -88,11 +88,8 @@ def test_confidence_levels():
 
 def test_pick_ui_prefers_llm_choice_then_lot_for_lot_tools_then_last():
     cards = {"status": {"type": "status"}, "lot": {"type": "lot"}}
-    # LLM이 명시한 타입 우선
     assert _pick_ui(cards, "status", ["get_fab_status"])["type"] == "status"
-    # lot 도구를 썼는데 마커가 status/빈값이면 lot 카드로 보정
     assert _pick_ui(cards, "", ["get_top_toolgroups"])["type"] == "lot"
-    # 마커 누락 + 비-lot 도구 → 마지막 등록 카드
     only = {"trend": {"type": "trend"}}
     assert _pick_ui(only, "", ["get_kpi_trend"])["type"] == "trend"
     assert _pick_ui({}, "", []) is None

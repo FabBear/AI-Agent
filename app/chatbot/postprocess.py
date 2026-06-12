@@ -91,7 +91,7 @@ def _validate_numbers(answer: str, messages: list) -> list[str]:
         has_data_term = any(term in compact for term in DATA_NUMERIC_TERMS)
         has_calc_term = any(term in compact for term in CALCULATION_TERMS)
         if not (has_data_term or has_calc_term):
-            return []  # 도구 미사용 개념/잡담은 검증 대상 아님
+            return []
         suspects = [n for n in re.findall(r"\d+(?:[.,]\d+)?", answer) if len(n.replace(",", "").replace(".", "")) > 1]
         suspects = list(dict.fromkeys(suspects))
         if suspects:
@@ -115,13 +115,11 @@ def _has_repetition_loop(text: str) -> bool:
     compact = re.sub(r"\s+", "", text or "")
     if len(compact) < 80:
         return False
-    # 같은 덩어리 반복(예: 1+29+... = 1+29+... = ...) 탐지.
     for size in range(16, min(90, len(compact) // 3)):
         for start in range(0, max(1, min(len(compact) - size * 3, 240))):
             chunk = compact[start:start + size]
             if chunk and compact.count(chunk) >= 4:
                 return True
-    # 긴 산술식은 본문에 필요 없다. 카드/표로 보여야 하는 영역이다.
     return len(re.findall(r"\d+\s*\+", text or "")) >= 8
 
 

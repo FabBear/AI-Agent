@@ -48,7 +48,6 @@ def generate_title(message: str, model: str | None = None) -> str | None:
             api_key=os.getenv("OPENAI_API_KEY"),
             timeout=15,
             max_retries=0,
-            # gpt-5 계열은 reasoning 토큰도 completion 한도에 포함 → 30이면 빈 응답이 날 수 있어 여유를 둔다.
             max_completion_tokens=300,
             **llm_tuning_kwargs(model_name, 0.2),
         )
@@ -62,7 +61,7 @@ def generate_title(message: str, model: str | None = None) -> str | None:
             text = "".join(part.get("text", "") if isinstance(part, dict) else str(part) for part in text)
         title = (text or "").strip().strip("\"'").splitlines()[0].strip() if text else ""
         return title[:30] or None
-    except Exception:  # noqa: BLE001 - 제목 생성 실패는 치명적이지 않음.
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -76,7 +75,6 @@ def build_agent(live_status: str | None, fab_id: UUID | None, model: str | None)
         api_key=os.getenv("OPENAI_API_KEY"),
         timeout=float(os.getenv("CHAT_AGENT_TIMEOUT_SEC", "30")),
         max_retries=int(os.getenv("CHAT_AGENT_MAX_RETRIES", "1")),
-        # gpt-5 계열은 reasoning 토큰도 이 한도에 포함 → 본문+트레일러가 잘리지 않게 여유를 둔다.
         max_completion_tokens=int(os.getenv("CHAT_AGENT_MAX_TOKENS", "1600")),
         **llm_tuning_kwargs(model_name, float(os.getenv("CHAT_AGENT_TEMPERATURE", "0.3"))),
     ).bind_tools(tools)
@@ -129,7 +127,6 @@ async def answer_chat(
         messages.append(ai)
 
     text = content_text(ai).strip()
-    # 미완수 가드: '기다려 달라'류 약속만 하고 끝내면 한 번 더 강하게 지시해 완결 답변을 받는다.
     if text and _PROMISE_RE.search(text):
         messages.append(SystemMessage(content=_INCOMPLETE_RETRY_MSG))
         for _ in range(2):
@@ -194,7 +191,6 @@ async def answer_chat_stream(
         acc = None
         async for chunk in llm.astream(messages):
             acc = chunk if acc is None else acc + chunk
-            # 도구 호출 스텝이면 토큰 미노출(내부 단계).
             if getattr(acc, "tool_call_chunks", None) or getattr(acc, "tool_calls", None):
                 continue
             vis = _visible(content_text(acc), final=False)

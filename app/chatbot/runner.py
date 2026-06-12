@@ -51,7 +51,7 @@ async def run_tool_calls(agent: dict, tool_calls: list, messages: list) -> None:
             result = fn(**tool_args(call)) if fn else "알 수 없는 도구입니다."
             if inspect.isawaitable(result):
                 result = await result
-        except Exception:  # noqa: BLE001 - one tool failure should not kill the whole chat turn.
+        except Exception:  # noqa: BLE001
             logger.exception("chat tool call failed: %s", name or "<unknown>")
             result = f"{name or '도구'} 실행 중 오류가 발생했습니다. 해당 데이터는 현재 사용할 수 없습니다."
         messages.append(ToolMessage(content=str(result), tool_call_id=tool_call_id(call)))

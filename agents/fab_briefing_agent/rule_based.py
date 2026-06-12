@@ -139,7 +139,6 @@ def _watch_candidates(
 
 
 def _briefing_directions(down: int, top_area_name: str | None) -> list[ResponseDirection]:
-    # '대응 방향'이 아니라 현장 작업자가 바로 확인하면 좋은 포인트(운영 사실 기반).
     directions: list[ResponseDirection] = []
     if down > 0:
         directions.append(ResponseDirection(
@@ -159,8 +158,6 @@ def _briefing_directions(down: int, top_area_name: str | None) -> list[ResponseD
 
 
 def build_fab_briefing_baseline(req: AgentTaskAgentRequest) -> AgentTaskResult:
-    # 병목 예측이 아니라 '현재 공장 전체 현황'을 현장 작업자가 한눈에 보도록,
-    # 3D 뷰와 동일한 실시간 MES 스냅샷(mesCurrent)만 근거로 집계한다.
     ctx = req.context
     fab = _fab_summary(ctx)
     procs = _process_summaries(ctx)
@@ -191,7 +188,6 @@ def build_fab_briefing_baseline(req: AgentTaskAgentRequest) -> AgentTaskResult:
     if not top_area_name and top_tg:
         top_area_name = _tg_area(top_tg)
 
-    # mesCurrent.fab가 없으면 화면 toolGroups로 최소 집계(degraded).
     if total_tools == 0 and not fab:
         total_wip = sum(to_int(t.get("wipCount")) for t in tgs)
         util = (sum(num(t.get("utilizationRate")) for t in tgs) / len(tgs)) if tgs else 0.0

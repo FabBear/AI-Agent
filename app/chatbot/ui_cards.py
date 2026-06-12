@@ -44,8 +44,6 @@ def _fab_status_lookup(live_status: str | None, area: str = "") -> str:
         return f"'{area}' 구역을 현재 현황에서 찾지 못했습니다. 전체 현황:\n{live_status}"
     return "\n".join(lines)
 
-
-# ── 텍스트 포매터(도구가 LLM에 돌려주는 근거 텍스트) ──────────────────────────
 def _fmt_trend(rows: list, area: str) -> str:
     if not rows:
         return f"'{area or '전체'}' 추세 데이터가 없습니다."
@@ -220,8 +218,6 @@ def _fmt_cases(rows: list, area: str) -> str:
     ]
     return "최근 병목 케이스:\n" + "\n".join(lines)
 
-
-# ── Generative UI 카드(프론트 렌더용 구조화 데이터) ──────────────────────────
 def _status_card(live_status: str | None) -> dict | None:
     """Spring buildLiveFabContext가 만든 현황 텍스트(형식을 우리가 통제)를 구조화 카드로.
     형식: '전체: 가동률 21.8%, WIP 572 Lot, 설비 가동 440/대기 1071/셋업 0/비가동 51, 가용률 96.5%'
@@ -260,7 +256,6 @@ def _status_card(live_status: str | None) -> dict | None:
 def _trend_card(rows: list, area: str, hours: int, group_by: str = "area") -> dict | None:
     if not rows:
         return None
-    # 버킷별로 매칭 구역 평균(WIP/가동률%/Q-time)을 합쳐 미니 라인차트용 시리즈 생성.
     by_bucket: dict = {}
     labels: set[str] = set()
     for r in rows:
@@ -272,7 +267,6 @@ def _trend_card(rows: list, area: str, hours: int, group_by: str = "area") -> di
         agg["qtime"].append(float(r["qtime"] or 0))
     buckets = sorted(by_bucket)
     avg = lambda xs: round(sum(xs) / len(xs), 1) if xs else 0  # noqa: E731
-    # 제목은 LLM이 넘긴 인자가 아니라 실제 매칭된 데이터 기준(부분일치/스테일 인자 보호).
     subject = next(iter(labels)) if len(labels) == 1 else (f"{area} 일대" if area else "전체")
     unit = " TG별" if group_by == "tg" and len(labels) > 1 else ""
     return {

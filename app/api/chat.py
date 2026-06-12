@@ -98,7 +98,7 @@ async def send_message(
                 confidence = result["confidence"]
                 warnings = list(result["warnings"])
                 tools_used = list(result["toolsUsed"])
-        except Exception:  # noqa: BLE001 - LLM 오류 시 degraded로 폴백 신호.
+        except Exception:  # noqa: BLE001
             logger.exception("chat answer_chat 실패")
             answer = None
         if request.generate_title:
@@ -134,7 +134,7 @@ async def stream_message(
                 if title:
                     yield f"event: title\ndata: {json.dumps({'title': title}, ensure_ascii=False)}\n\n"
             yield "event: done\ndata: {}\n\n"
-        except Exception:  # noqa: BLE001 - 스트림 중 오류는 error 이벤트로 알리고 종료.
+        except Exception:  # noqa: BLE001
             logger.exception("chat stream 실패")
             yield "event: error\ndata: {\"message\": \"stream failed\"}\n\n"
 
