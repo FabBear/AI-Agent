@@ -120,7 +120,7 @@ def load_correction_rules() -> CorrectionRules:
         }
         numeric_words = {int(key): str(value) for key, value in dict(payload["numeric_words"]).items()}
         return CorrectionRules(korean_fixes, part_aliases, numeric_words)
-    except Exception:  # noqa: BLE001 - fallback preserves voice input availability.
+    except Exception:  # noqa: BLE001
         logger.warning("STT correction rules load failed; using built-in defaults", exc_info=True)
         return _default_rules()
 

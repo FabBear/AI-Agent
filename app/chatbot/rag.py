@@ -31,7 +31,6 @@ def rag_search(query: str) -> list[dict]:
             .data[0]
             .embedding
         )
-        # qdrant-client 버전과 서버(1.9.4) 호환 이슈를 피해 REST search API를 직접 호출.
         url = os.getenv("QDRANT_URL", "http://localhost:6333").rstrip("/")
         collection = os.getenv("QDRANT_COLLECTION", "fabbear_rag_documents")
         resp = httpx.post(
@@ -54,7 +53,7 @@ def rag_search(query: str) -> list[dict]:
                 "score": score,
             })
         return out
-    except Exception:  # noqa: BLE001 - RAG 실패해도 대화는 계속.
+    except Exception:  # noqa: BLE001
         logger.exception("RAG 검색 실패")
         return []
 

@@ -13,13 +13,11 @@ def test_korean_mishear_dictionary():
 
 
 def test_demo_phrase_misrecognitions():
-    # 데모에서 반복되는 발화의 고빈도 오인식(트렌드→툴그룹, 세리디벨벳→3D 맵 등)
     assert correct_transcript("가장 먼저 봐야 할 트렌드가 뭐야?") == "가장 먼저 봐야 할 툴그룹 뭐야?"
     assert correct_transcript("세리디벨벳에서 위치 찍어줄 수 있어?") == "3D 맵에서 위치 찍어줘?"
 
 
 def test_past_tense_haetdeon_preserved_when_not_location():
-    # '아까 했던 질문'의 '했던'은 표준 과거형 → 치환 금지(해당 구역류 문맥만 보정)
     assert correct_transcript("아까 했던 질문 다시 보여줘") == "아까 했던 질문 다시 보여줘"
 
 

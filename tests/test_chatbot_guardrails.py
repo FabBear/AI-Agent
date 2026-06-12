@@ -32,7 +32,6 @@ def test_blocks_admin_change_commands():
 
 
 def test_allows_read_and_question_forms():
-    # 조회/질문/요약은 막지 않아야 한다(오탐 방지 — 데모 치명)
     assert detect_execution_intent("리포트 요약해줘") is None
     assert detect_execution_intent("최근 케이스 승인됐어?") is None
     assert detect_execution_intent("승인 대기 건수 알려줘") is None

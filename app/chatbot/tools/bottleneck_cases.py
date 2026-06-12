@@ -18,7 +18,7 @@ async def search_bottleneck_cases(ctx: ChatContext, area: str = "", status: str 
     except Exception:  # noqa: BLE001
         logger.exception("search_bottleneck_cases 실패")
         return "병목 케이스 조회 중 오류가 발생했습니다."
-    if rows:  # 케이스 0건이면 카드 생략(빈 카드 노이즈 방지)
+    if rows:
         ctx.set_card("cases", _cases_card(rows, area))
     return _fmt_cases(rows, area)
 

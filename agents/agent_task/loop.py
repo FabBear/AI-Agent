@@ -2,7 +2,7 @@
 
 LLM이 도구를 스스로 골라 호출 → 결과 보고 다음 행동 결정 → structured 결과 작성.
 도구 호출마다 progress step을 남겨 '에이전트가 판단하는 과정'을 화면에 노출한다.
-LLM 미사용/실패 시 결정론적 baseline으로 graceful degrade(가드레일·데모 안전)."""
+LLM 미사용/실패 시 결정론적 baseline으로 graceful degrade한다."""
 
 import asyncio
 import inspect
@@ -40,7 +40,6 @@ async def run_agent_loop(
     max_steps: int = 5,
 ) -> AgentTaskAgentResponse:
     """도구 기반 에이전트 루프를 돌려 AgentTaskAgentResponse를 만든다."""
-    # 키 없음/명시적 OFF → 결정론적 baseline (가드레일·데모 안전).
     if not should_use_llm(ctx.req):
         ctx.trace("RULE_BASED", "로컬 룰베이스 모드로 현황을 집계했습니다.")
         return _respond(ctx, baseline_builder(ctx.req))
@@ -60,7 +59,6 @@ async def run_agent_loop(
             for call in tool_calls:
                 await _exec_and_trace(ctx, tool_fns, tool_labels, call, messages)
 
-        # 도구 결과만 근거로 최종 structured 결과 작성.
         structured = make_chat_llm(ctx.req).with_structured_output(AgentTaskResult)
         result = await structured.ainvoke(messages + [HumanMessage(content=COMPOSE_INSTRUCTION)])
         if not isinstance(result, AgentTaskResult):
@@ -69,7 +67,7 @@ async def run_agent_loop(
             raise ValueError("빈 결과")
         ctx.trace("COMPOSE", "조회 결과를 종합해 결과를 작성했습니다.")
         return _respond(ctx, result)
-    except Exception as exc:  # noqa: BLE001 - 에이전트 실패는 룰베이스로 degrade.
+    except Exception as exc:  # noqa: BLE001
         logger.exception("agent loop failed; falling back to baseline")
         ctx.trace("FALLBACK", f"에이전트 실행 실패로 룰베이스 결과를 반환합니다: {_short(exc)}")
         return _respond(ctx, baseline_builder(ctx.req))
@@ -87,7 +85,7 @@ async def _exec_and_trace(ctx, tool_fns, tool_labels, call, messages) -> None:
         result = await _call_tool(fn, args) if fn else "알 수 없는 도구입니다."
         if inspect.isawaitable(result):
             result = await result
-    except Exception:  # noqa: BLE001 - 도구 한 건 실패가 전체를 죽이지 않게.
+    except Exception:  # noqa: BLE001
         logger.exception("agent tool call failed: %s", name or "<unknown>")
         result = f"{name or '도구'} 조회 실패 — 해당 데이터는 현재 사용할 수 없습니다."
     text = str(result)

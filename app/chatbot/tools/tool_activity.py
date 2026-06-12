@@ -21,7 +21,6 @@ async def get_tool_activity(ctx: ChatContext, tool: str = "", hours: int = 6) ->
     except Exception:  # noqa: BLE001
         logger.exception("get_tool_activity 실패")
         return "설비 활동 조회 중 오류가 발생했습니다."
-    # 여러 설비가 매칭되면 정확일치 우선으로 1대만 선택(차트는 단일 설비 기준).
     if rows:
         codes = {r["tool_code"] for r in rows}
         if len(codes) > 1:

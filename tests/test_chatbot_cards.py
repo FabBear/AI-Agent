@@ -169,7 +169,6 @@ def test_fmt_case_detail_sorts_shap_and_reads_jsonb_string():
     }]
     hitl = [{"re_decision_seq": 1, "decision": "APPROVED", "comment": "ok", "decided_at": dt.datetime(2020, 1, 26, 10, 0)}]
     out = _fmt_case_detail(row, plans, hitl)
-    # SHAP top-3가 abs값 큰 순으로(wip=-0.6 먼저) 들어가는지
     assert "wip=-0.6" in out and "wait_ratio=0.42" in out
     assert "확산 영향 TG: 2곳" in out
     assert "우선순위 부스트 [선택됨]" in out
