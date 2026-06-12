@@ -79,6 +79,19 @@ class SpringClient:
         except Exception as exc:
             logger.warning("내부 알림 전송 실패: %s", exc)
 
+    async def save_ml_predictions(self, predictions: list[dict]) -> None:
+        """[MLOps] 전체 ToolGroup 예측을 백엔드에 위임 적재(tt_ml_bottleneck_pred).
+
+        Drift 평가용 데이터 축적이 목적. 추론 응답을 막지 않도록 실패는 삼키지 말고 로깅만.
+        """
+        if not predictions:
+            return
+        try:
+            await self._post("/api/internal/ml-predictions", {"predictions": predictions})
+            logger.info("ML 예측 적재 완료: %d건", len(predictions))
+        except Exception as exc:
+            logger.warning("ML 예측 적재 실패(%d건): %s", len(predictions), exc)
+
     async def _post(self, path: str, payload: dict) -> None:
         response = await self._client.post(
             path,

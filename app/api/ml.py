@@ -13,6 +13,7 @@ from app.common.responses import ApiResponse, success
 from app.config import Settings, get_settings
 from app.repositories.tg_metrics_repository import TgMetricsRepository
 from app.services.predict_service import PredictService
+from app.services.spring_client import get_spring_client
 
 router = APIRouter()
 
@@ -57,6 +58,21 @@ async def predict(
         service.predict_all,
         [record.kpi for record in records],
     )
+
+    # [MLOps] 전체 ToolGroup 예측을 백엔드에 위임 적재 (Drift 평가용 데이터 축적).
+    # 추론 응답을 지연시키지 않도록 fire-and-forget (실패는 save_ml_predictions 내부에서 로깅).
+    persist_payload = [
+        {
+            "runId": settings.live_run_id,
+            "snapshotTime": detail.snapshot_time,
+            "tgName": detail.toolgroup,
+            "predProb": detail.probability,
+            "isBottleneckPred": detail.probability >= settings.alarm_proba_threshold,
+        }
+        for detail in details
+    ]
+    asyncio.create_task(get_spring_client().save_ml_predictions(persist_payload))
+
     records_by_code = {record.kpi.toolgroup: record for record in records}
     predictions = [
         Prediction(
