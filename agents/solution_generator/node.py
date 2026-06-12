@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agents.schemas.alert import BottleneckAlert, SeverityLevel
 from agents.schemas.solution import SimParamDelta, SolutionCandidate
+from agents.solution_generator.llm_generator import generate_texts
 from agents.solution_generator.rule_engine import (
     clip_interval_pct,
     generate_candidates,
@@ -17,9 +18,20 @@ _RANK_META = {
 }
 
 
-def _build_candidate(level: str, params_dict: dict) -> SolutionCandidate:
+def _build_candidate(
+    level: str,
+    params_dict: dict,
+    texts: dict[str, dict[str, str]],
+    severity: SeverityLevel,
+) -> SolutionCandidate:
     rank, name = _RANK_META[level]
-    clipped_pct = clip_interval_pct(params_dict["release_interval_delta_pct"])
+    proposed_pct = params_dict["release_interval_delta_pct"]
+    clipped_pct = (
+        clip_interval_pct(proposed_pct, severity)
+        if proposed_pct is not None
+        else None
+    )
+
     return SolutionCandidate(
         rank=rank,
         name=name,
@@ -29,6 +41,8 @@ def _build_candidate(level: str, params_dict: dict) -> SolutionCandidate:
             priority_direction=params_dict["priority_direction"],
             superhotlot_enable=params_dict["superhotlot_enable"],
         ),
+        expected_effect=texts[level].get("expected_effect", ""),
+        rationale=texts[level].get("rationale", ""),
     )
 
 
@@ -38,7 +52,7 @@ def generate_solutions(state: PipelineState) -> PipelineState:
 
     target_alerts = [
         a for a in alerts
-        if a.severity == SeverityLevel.CRITICAL
+        if a.severity in {SeverityLevel.CRITICAL, SeverityLevel.HIGH}
         and a.toolgroup in cause_map
     ]
 
@@ -50,10 +64,17 @@ def generate_solutions(state: PipelineState) -> PipelineState:
         if result is None:  # judgment=None → 대응안 생성 불가
             continue
 
+        texts = generate_texts(alert, cause_report, result)
         candidates = [
-            _build_candidate(lv, result[lv])
+            _build_candidate(lv, result[lv], texts, alert.severity)
             for lv in ("conservative", "standard", "aggressive")
         ]
+
+        if result.get("hitl_escalation_recommended"):
+            reason = result.get("escalation_reason", "")
+            for c in candidates:
+                if reason and "[HITL]" not in c.rationale:
+                    c.rationale = f"[HITL 에스컬레이션 권고] {reason} | {c.rationale}"
 
         solution_candidates.append({
             "toolgroup": alert.toolgroup,

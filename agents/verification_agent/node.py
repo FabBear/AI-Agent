@@ -1,9 +1,6 @@
 """LangGraph 노드: solution_candidates → verification_results.
 
-각 대응안 후보(rank 1~3)에 대해 WHATIF 시뮬 30회 paired 실행:
-  - seed = baseline 런과 동일 (runs_manifest.csv 기준)
-  - D_i = whatif_i − baseline_i per KPI per pair
-  - paired t-test → p-value, 95% CI, verdict
+GlobalSolutionPlan 또는 per-TG SolutionCandidate 각각에 대해 WHATIF 시뮬을 paired 실행한다.
 """
 
 from __future__ import annotations
@@ -79,6 +76,8 @@ def _verify_candidates(
             "lot_priority_rule": candidate.params.lot_priority_rule,
             "dispatch_rule": candidate.params.dispatch_rule,
             "superhotlot_enable": candidate.params.superhotlot_enable,
+            "expected_effect": candidate.expected_effect,
+            "rationale": candidate.rationale,
         }
 
         verified.append({
@@ -200,13 +199,11 @@ def verify_solutions(state: PipelineState) -> PipelineState:
         _log.error("[Verify] baseline 시나리오 없음 — 전체 스킵")
         return {**state, "verification_results": []}
 
-    # GlobalSolutionPlan 포맷 (plan_id 키 존재) → 플랜별 통합 시뮬
     if "plan_id" in solution_candidates[0]:
         return {**state, "verification_results": _verify_global_plans(
             solution_candidates, alerts, t0,
         )}
 
-    # per-TG 포맷 (solution_generator 출력)
     alert_map = {a.toolgroup: a for a in alerts}
     results: list[dict] = []
 

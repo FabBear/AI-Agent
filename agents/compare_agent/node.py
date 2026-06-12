@@ -738,8 +738,17 @@ def compare_llm(state: "PipelineState") -> dict:
         cause = _build_cause_block(ci)
         cascade = _build_cascade_block(ci)
         action_options = [_build_current_state_option(ci, current_state["kpi"])]
+        scored_map = {
+            s["label"]: s
+            for s in ci.get("scored_actions", [])
+            if isinstance(s, dict) and s.get("label")
+        }
         for c in candidates:
-            action_options.append(_build_action_option(c, current_state["kpi"], decision_info))
+            opt = _build_action_option(c, current_state["kpi"], decision_info)
+            scored = scored_map.get(c["label"], {})
+            if scored.get("badge") and not opt.get("badge"):
+                opt["badge"] = scored["badge"]
+            action_options.append(opt)
         recommendation = _build_recommendation_block(recommendation_obj, decision_info, top_candidate)
         decision_meta = _build_decision_meta(decision_info)
 
