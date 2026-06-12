@@ -219,7 +219,10 @@ def _apply_scenario(
         for lv in _PLAN_LEVELS:
             params[lv]["priority_direction"] = "UP"
             params[lv]["superhotlot_enable"] = True
-        params["conservative"]["release_interval_delta_pct"] = severity_pct["conservative"]
+        params["conservative"]["release_interval_delta_pct"] = max(
+            params["conservative"]["release_interval_delta_pct"],
+            severity_pct["conservative"],
+        )
         return params, False, None
 
     if scenario == "S3":
