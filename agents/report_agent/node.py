@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agents.state import PipelineState
 
-from agents.report_agent.writer import write_summary, write_diffusion, write_cause, write_actions
+from agents.report_agent.adapter import (
+    has_actions,
+    normalize_compare_result,
+    sanitize_for_json,
+)
+from agents.report_agent.builder import build_report_v2
+from agents.report_agent.writer import narrate, render_sections
 
 _ROOT = Path(__file__).parent.parent.parent
 REPORTS_DIR = _ROOT / "report_agent_out"
@@ -20,8 +26,17 @@ REPORTS_DIR = _ROOT / "report_agent_out"
 # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────────
 
 def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, kpi_map: dict | None = None, detected_at: str = "") -> dict:
-    """compare_result + PipelineState 데이터 → report_draft 초기 항목."""
+    """compare_result + PipelineState 데이터 → report_draft 초기 항목.
+
+    compare_result는 Phase 1/Phase 2 경로에 따라 shape이 다르다.
+    adapter.normalize_compare_result로 한 번 정규화한 뒤 사용한다.
+    """
     tg = compare_result["toolgroup"]
+    normalized = normalize_compare_result(compare_result)
+    action_options = normalized["action_options"]
+    recommendation = normalized["recommendation"]
+    decision_meta  = normalized["decision_meta"]
+    approval_info  = normalized["approval_info"]
     if not detected_at:
         detected_at = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -33,7 +48,6 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
     if kpi:
         bottleneck_info.update({
             "avg_queue_time_min": round(float(kpi.q_time_min), 1),
-            "peak_q_time_min": round(float(kpi.q_time_min), 1),
             "utilization_pct": round(float(kpi.utilization_avg) * 100, 1),
             "load_ratio": round(float(kpi.wait_ratio), 4),
             "wip_count": int(kpi.wip),
@@ -189,7 +203,6 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
         cause_analysis = {
             "shap_top": shap_top,
             "categories": categories_list,
-            "judgment": judgment_dict,
             "summary": cause_report.cause_summary or "",
             "consensus": consensus_dict,
             "judgment": judgment_dict,
@@ -222,15 +235,7 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
                 row[feat] = round(float(vals[i]), 4) if i < len(vals) else None
             feature_trend.append(row)
 
-        trend_stats = [
-            {
-                "feature": t.feature,
-                "slope_per_hour": round(float(t.slope_per_hour), 4),
-                "r2": round(float(t.r2), 4),
-                "significant": t.significant,
-            }
-            for t in cause_report.trend_top
-        ]
+    actions_available = has_actions(normalized)
 
     return {
         "toolgroup": tg,
@@ -246,11 +251,15 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
         "cause_analysis": cause_analysis,
         "shap_analysis": shap_analysis,
         "feature_trend": feature_trend,
-        "trend_stats": trend_stats,
-        "action_effects": compare_result.get("action_effects", []),
-        "recommendation": compare_result.get("recommendation", {}),
-        "decision_info": compare_result.get("decision_info", {}),
-        "approval_info": compare_result.get("approval_info", {}),
+        "action_effects": action_options,
+        "recommendation": recommendation,
+        "decision_info": decision_meta,
+        "approval_info": approval_info,
+        # 업스트림에 승인 가능한 후보가 없으면 writer가 '대응안' 섹션을
+        # 빈 표/None 으로 만드는 대신 안내 문구로 처리하도록 신호.
+        "data_sufficiency": {
+            "actions_available": actions_available,
+        },
         "section_header": "",
         "section_review": "",
         "section_summary": "",
@@ -302,6 +311,24 @@ def report_prepare(state: "PipelineState") -> dict:
             detected_at=detected_at,
         )
 
+        # JSON v2 객체 빌드 — 결정론적(코드만, LLM 없음). sections는
+        # 이후 LLM 노드들이 채운 마크다운 문자열로 report_save에서 합쳐 넣는다.
+        normalized = normalize_compare_result(cr)
+        snapshot_time = kpi_map[tg].snapshot_time if tg in kpi_map else None
+        report_v2 = build_report_v2(
+            tg=tg,
+            alert=alert,
+            kpi=kpi_map.get(tg),
+            prev_kpi=prev_kpi_map.get(tg),
+            cause_report=cause_map.get(tg),
+            kpi_map=kpi_map,
+            normalized_compare=normalized,
+            detected_at=detected_at,
+            snapshot_time=snapshot_time,
+        )
+        # ReportV2 객체 자체를 부착 — 직렬화는 저장 시점에 한 번만.
+        item["report_v2"] = report_v2
+
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         sev = item["severity"]
         badge = {"Critical": "🚨 CRITICAL", "High": "🔴 HIGH", "Medium": "🟡 MEDIUM", "Low": "🟢 LOW"}.get(sev, sev)
@@ -345,63 +372,61 @@ def report_prepare(state: "PipelineState") -> dict:
 
 
 def report_summary(state: "PipelineState") -> dict:
-    """Agent 6-2: 요약 섹션 LLM 작성."""
+    """Agent 6-2: **단일 LLM 호출**로 4개 섹션 narrative 동시 생성 +
+    결정론적 표와 합쳐 4개 섹션 모두 채운다.
+
+    PR #3 변경: 이전에는 summary/diffusion/cause/actions가 각각 LLM을
+    호출(총 4회)했다. 지금은 여기서 한 번만 호출하고 모든 섹션을 채우며,
+    이후 report_diffusion/report_cause/report_actions 노드는 passthrough이다.
+    LangGraph 노드 이름은 보존(pipeline.py 무변경)하기 위해 함수 자체는 유지.
+    """
     from agents.logger import get_logger
     _log = get_logger(__name__)
 
     draft = [dict(item) for item in state.get("report_draft", [])]
     for item in draft:
+        rv2 = item.get("report_v2")
+        if rv2 is None:
+            _log.warning(f"[Report] {item.get('toolgroup', '?')} report_v2 없음 — 스킵")
+            continue
         try:
-            item["section_summary"] = write_summary(item)["section_summary"]
-            _log.info(f"[Report] {item['toolgroup']} summary 완료")
+            narration = narrate(rv2)
+            sections = render_sections(rv2, narration)
+            item["section_summary"]   = sections["summary"]
+            item["section_diffusion"] = sections["diffusion"]
+            item["section_cause"]     = sections["cause"]
+            item["section_actions"]   = sections["actions"]
+            _log.info(f"[Report] {item['toolgroup']} narrate+render 완료 (단일 LLM 호출)")
         except Exception as e:
-            _log.error(f"[Report] {item['toolgroup']} summary 실패: {e}")
+            # 결정론적 fallback: LLM이 죽어도 표는 코드가 만들었으므로
+            # 빈 narration으로 렌더링하면 표만 있는 보고서가 나온다.
+            _log.error(f"[Report] {item['toolgroup']} narrate 실패: {e}")
+            try:
+                from agents.report_agent.writer import _fallback_narration
+                fb = _fallback_narration(rv2)
+                sections = render_sections(rv2, fb)
+                item["section_summary"]   = sections["summary"]
+                item["section_diffusion"] = sections["diffusion"]
+                item["section_cause"]     = sections["cause"]
+                item["section_actions"]   = sections["actions"]
+            except Exception as e2:
+                _log.error(f"[Report] {item['toolgroup']} fallback 렌더도 실패: {e2}")
     return {"report_draft": draft}
 
 
-def report_diffusion(state: "PipelineState") -> dict:
-    """Agent 6-3: 확산 영향 섹션 LLM 작성."""
-    from agents.logger import get_logger
-    _log = get_logger(__name__)
+def _report_passthrough(state: "PipelineState") -> dict:
+    """report_summary가 이미 모든 섹션을 채웠으므로 그대로 통과시킨다.
 
-    draft = [dict(item) for item in state.get("report_draft", [])]
-    for item in draft:
-        try:
-            item["section_diffusion"] = write_diffusion(item)["section_diffusion"]
-            _log.info(f"[Report] {item['toolgroup']} diffusion 완료")
-        except Exception as e:
-            _log.error(f"[Report] {item['toolgroup']} diffusion 실패: {e}")
-    return {"report_draft": draft}
+    LangGraph 그래프의 4-step LLM 체인을 1-step LLM + 3-step no-op으로
+    바꾸기 위한 어댑터. pipeline.py(외부 파일)를 안 건드리는 게 목적.
+    """
+    return {"report_draft": list(state.get("report_draft", []))}
 
 
-def report_cause(state: "PipelineState") -> dict:
-    """Agent 6-4: 원인 분석 섹션 LLM 작성."""
-    from agents.logger import get_logger
-    _log = get_logger(__name__)
-
-    draft = [dict(item) for item in state.get("report_draft", [])]
-    for item in draft:
-        try:
-            item["section_cause"] = write_cause(item)["section_cause"]
-            _log.info(f"[Report] {item['toolgroup']} cause 완료")
-        except Exception as e:
-            _log.error(f"[Report] {item['toolgroup']} cause 실패: {e}")
-    return {"report_draft": draft}
-
-
-def report_actions(state: "PipelineState") -> dict:
-    """Agent 6-5: 대응안 섹션 LLM 작성."""
-    from agents.logger import get_logger
-    _log = get_logger(__name__)
-
-    draft = [dict(item) for item in state.get("report_draft", [])]
-    for item in draft:
-        try:
-            item["section_actions"] = write_actions(item)["section_actions"]
-            _log.info(f"[Report] {item['toolgroup']} actions 완료")
-        except Exception as e:
-            _log.error(f"[Report] {item['toolgroup']} actions 실패: {e}")
-    return {"report_draft": draft}
+# pipeline.py가 import하는 노드 이름을 보존한다. 실제 구현은 passthrough.
+report_diffusion = _report_passthrough
+report_cause     = _report_passthrough
+report_actions   = _report_passthrough
 
 
 def report_save(state: "PipelineState") -> dict:
@@ -434,24 +459,49 @@ def report_save(state: "PipelineState") -> dict:
         md_path.write_text(final_report, encoding="utf-8")
 
         json_path = REPORTS_DIR / f"{base}.json"
-        json_path.write_text(
-            json.dumps({
-                "meta": {
-                    "process_name": item.get("process_name", "-"),
-                    "severity": item.get("severity", "-"),
-                    "detected_at": item.get("detected_at", "-"),
-                    "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                },
-                "bottleneck_info": item.get("bottleneck_info", {}),
-                "fab_kpi": item.get("fab_kpi", {}),
+        # ── JSON v2 (1등 시민) ───────────────────────────────────────────
+        # report_prepare에서 부착한 ReportV2 객체에 마크다운 섹션을
+        # 채워 넣고 dict로 직렬화한다.
+        report_v2 = item.get("report_v2")
+        if report_v2 is not None:
+            # 마크다운 섹션 주입 (LLM 노드들이 채운 결과)
+            report_v2.sections.header    = item.get("section_header", "")
+            report_v2.sections.review    = item.get("section_review", "")
+            report_v2.sections.summary   = item.get("section_summary", "")
+            report_v2.sections.diffusion = item.get("section_diffusion", "")
+            report_v2.sections.cause     = item.get("section_cause", "")
+            report_v2.sections.actions   = item.get("section_actions", "")
+            report_v2.rendered.markdown  = final_report
+
+            v2_payload = report_v2.model_dump(mode="json")
+        else:
+            v2_payload = None
+
+        # ── Legacy 키 (백엔드 호환 유지용) ───────────────────────────────
+        # PR #2 동안은 함께 출력 — backend가 v2로 마이그레이션하면 제거 예정.
+        # 업스트림(특히 compare_agent의 paired_t_p)이 NaN을 흘려보낸다.
+        # 표준 JSON에는 NaN/Inf 토큰이 없어 Spring Jackson/JSON.parse가 깨지므로
+        # 직렬화 직전에 None으로 sanitize하고 allow_nan=False로 재발을 막는다.
+        payload = sanitize_for_json({
+            "schema_version": "report/1.0",
+            # v2 — 새 1등 시민
+            **(v2_payload or {}),
+            # legacy — backend 마이그레이션 끝나면 제거
+            "legacy": {
+                "bottleneck_info":   item.get("bottleneck_info", {}),
+                "fab_kpi":           item.get("fab_kpi", {}),
                 "diffusion_analysis": item.get("diffusion_analysis", {}),
-                "cause_analysis": item.get("cause_analysis", {}),
-                "action_effects": item.get("action_effects", []),
-                "recommendation": item.get("recommendation", {}),
-                "decision_info": item.get("decision_info", {}),
-                "approval_info": item.get("approval_info", {}),
-                "full_markdown": final_report,
-            }, ensure_ascii=False, indent=2),
+                "cause_analysis":    item.get("cause_analysis", {}),
+                "action_effects":    item.get("action_effects", []),
+                "recommendation":    item.get("recommendation", {}),
+                "decision_info":     item.get("decision_info", {}),
+                "approval_info":     item.get("approval_info", {}),
+                "data_sufficiency":  item.get("data_sufficiency", {}),
+                "full_markdown":     final_report,
+            },
+        })
+        json_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False),
             encoding="utf-8",
         )
 
@@ -466,7 +516,7 @@ def report_save(state: "PipelineState") -> dict:
     _log.info(f"[Report] 완료 — {len(report_results)}개 보고서")
 
     # 검증 시뮬 데이터 정리 (보고서 저장 후)
-    verify_results = state["verification_results"]
+    verify_results = state.get("verification_results", [])
     scenario_ids = [r.get("whatif_scenario_id") for r in verify_results if r.get("whatif_scenario_id")]
     if scenario_ids:
         try:

@@ -1,19 +1,45 @@
+"""report_agent — narrative 생성 (LLM) + section 렌더링 (코드).
+
+PR #3 설계
+=========
+- LLM은 narrative(짧은 문장)만 작성한다. 표·수치는 코드가 만든다.
+- 4개 섹션의 narrative를 1번의 structured-output 호출로 동시에 받는다.
+  · 토큰 비용 ~70% 절감
+  · 일관성: 동일 컨텍스트에서 4개 결론이 나오므로 "심화 중 vs 정상" 모순 없음
+- 표는 ReportV2(builder.py 산출)에서 결정론적으로 렌더링한다.
+  · LLM 환각 / `-` 빈칸 문제 원천 차단
+  · 컬럼·순서 회귀 테스트 가능
+- 마크다운 외형은 기존과 유사하게 유지한다.
+
+호출 흐름
+========
+narrate(report_v2) → ReportNarration         # 단일 LLM 호출
+render_sections(report_v2, narration) → 4 sections dict
+"""
+
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
-from typing import Optional, TypedDict
+from typing import Optional
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
 
 from agents import config
+from agents.report_agent.adapter import pick_approved_option  # noqa: F401  # 외부 import 보존
+from agents.report_agent.schema import (
+    ActionCandidate,
+    ReportV2,
+    SeverityToken,
+)
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
-# ── LLM 설정 ──────────────────────────────────────────────────────────────────
+
+# ── LLM ──────────────────────────────────────────────────────────────────────
+
 _llm: Optional[ChatOpenAI] = None
 
 
@@ -30,73 +56,75 @@ def _get_llm() -> ChatOpenAI:
             model=config.LLM_MODEL,
             api_key=api_key,
             temperature=config.LLM_TEMPERATURE,
-            max_completion_tokens=3000,
+            max_completion_tokens=1500,   # PR #2 이전: 4 × 3000. 현재: 1회 1500.
         )
     return _llm
 
 
-def _llm_write(system_prompt: str, user_prompt: str) -> str:
-    response = _get_llm().invoke([
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_prompt),
-    ])
-    return response.content.strip()
+# ── narrative 구조 (LLM이 채울 부분) ──────────────────────────────────────────
+
+class ReportNarration(BaseModel):
+    """LLM이 1회 호출로 만드는 4개 섹션 narrative.
+
+    LLM은 표 · 수치 · 마크다운 헤더를 만들지 않는다. 오직 문장만.
+    각 필드 description이 LLM 프롬프트 역할도 한다 (structured output).
+    """
+
+    tldr_3lines: list[str] = Field(
+        ...,
+        min_length=3, max_length=3,
+        description=(
+            "3줄 핵심 요약. 각 줄은 한 문장. "
+            "줄 1: 병목 상황 + risk_score 언급. "
+            "줄 2: 생산 영향 + load_ratio(wait_ratio) 언급. "
+            "줄 3: 긴급 조치 필요성. "
+            "문체는 '~됨/~함/~임' 으로 통일. 마크다운 기호 없이 순수 문장만."
+        ),
+    )
+    diffusion_interpretation: str = Field(
+        ...,
+        description=(
+            "확산 영향에 대한 한~두 문장 해석. "
+            "diffusion_path를 자연어로 풀어내고, bottleneck_trend를 보고 "
+            "Q-time/WIP가 심화/완화/유지 중인지 한 문장으로 요약. "
+            "표는 만들지 말 것 — 표는 코드가 생성함. 문체 '~됨/~함/~임'."
+        ),
+    )
+    cause_judgment: str = Field(
+        ...,
+        description=(
+            "원인 분석 판정. judgment.primary_reasoning을 그대로 인용하거나 "
+            "한 문장 요약. 이어서 secondary_causes가 있으면 '보조 원인: ...', "
+            "dismissed가 있으면 '기각: ... (이유: ...)' 추가. 2~4문장 이내."
+        ),
+    )
+    actions_summary: str = Field(
+        ...,
+        description=(
+            "승인된 대응안 요약 narrative. 'kpi_impact를 해석하여 한~두 문장'. "
+            "예: 'A 대응안은 Q-time을 145.3분에서 100.1분으로 감소시킬 것으로 "
+            "예측됨(시뮬레이션 기준).' 반려 상황이면 '반려됨 — 사유: ...' 한 줄. "
+            "수치는 데이터에 있는 값을 그대로 사용. 문체 '~됨/~함/~임'."
+        ),
+    )
 
 
-# ── State 정의 ────────────────────────────────────────────────────────────────
+# ── 시스템 프롬프트 (기존 _SYS 보존 + 표 작성 지시 제거) ────────────────────────
 
-class ReportState(TypedDict):
-    # ── 입력 (앞 Agent로부터 받는 데이터) ──
-    process_name: str
-    severity: str
-    detected_at: str
-
-    bottleneck_info: dict
-    fab_kpi: dict
-    bottleneck_trend: list
-    tool_status: list
-    affected_lots_detail: list
-    diffusion_analysis: dict
-    shap_analysis: dict
-    feature_trend: list
-    trend_stats: list
-    cause_analysis: dict
-    action_effects: list
-    recommendation: dict
-    decision_info: dict
-    approval_info: dict
-
-    # ── 생성된 섹션 ──
-    section_header: str
-    section_review: str
-    section_summary: str
-    section_diffusion: str
-    section_cause: str
-    section_actions: str
-
-    # ── 최종 출력 ──
-    final_report: str
-    output_path: str
-    json_output_path: str
-
-
-# ── 시스템 프롬프트 ────────────────────────────────────────────────────────────
-
-_SYS = """[역할]
-당신은 반도체 FAB 공정 병목 대응 의사결정 보고서를 작성하는 전문 AI입니다.
-병목 감지 · 원인 분석 · 대응안 생성 · 효과 검증 · 비교 분석을 수행한
-5개 AI Agent의 결과를 종합하여, 공정 관리자가 즉시 판단하고 행동할 수 있는
-최종 보고서를 작성합니다.
+_SYS_NARRATE = """[역할]
+당신은 반도체 FAB 공정 병목 대응 의사결정 보고서의 narrative(서술 문장)를
+작성하는 전문 AI입니다. 표 · KPI 카드 · 수치 비교는 별도 코드가 결정론적으로
+생성하므로, 당신은 반드시 문장(narrative)만 작성합니다.
 
 [독자]
 - 반도체 FAB 공정 관리자, 생산 엔지니어
-- WIP · Q-time · CQT · CT · TH · Load Ratio · CR · SHAP · SuperHotLot ·
+- WIP · Q-time · CT · TH · Load Ratio · CR · SHAP · SuperHotLot ·
   Dispatch Rule 등 FAB 공정 용어에 익숙합니다
 - 병목 발생 시 빠른 의사결정이 필요하므로 핵심 수치와 근거 중심으로 판단합니다
 - 모호한 표현을 신뢰하지 않으며, 데이터에 기반한 명확한 서술을 요구합니다
 
 [도메인 지식 — 이 기준으로 데이터를 해석하세요]
-risk_score 등급 (= 대기시간 30 + 부하 30 + 처리량갭 25 + 확산위험 15):
+risk_score 등급:
   · 정상   : 25 이하
   · MEDIUM : 26~47  → 주의 필요
   · HIGH   : 47~60  → 비정상 진입, 즉각 모니터링
@@ -108,307 +136,626 @@ Load Ratio 해석:
   · 0.90 ~ 1.00  : capacity 여유 낮음
   · > 1.00       : 과부하 / 2차 병목 가능
 
-원인 후보 분류:
-  · machine_downtime   : 장비 정지 · 비가동 영향
-  · setup_overhead     : setup 전환 부담 증가
-  · upstream_overload  : 앞 공정에서 유입량 증가
-  · capacity_saturation: 처리 능력 포화
-  · queue_buildup      : 일반적인 큐 적체
-
 [작성 원칙]
-1. 반드시 한국어로 작성합니다.
-   단, 장비명(예: Diffusion_FE_120) · KPI 지표명(WIP · Q-time · CT · TH) ·
-   Lot명 · 대응안 종류(REQUEUE_TOOL 등)는 원문 그대로 유지합니다.
-2. 제공된 수치는 반드시 그대로 사용합니다.
-   반올림 · 단위 변환 · 재계산 금지. (45.2% → "약 45%" 금지, 180분 → "3시간" 금지)
-3. 데이터에 없는 내용은 절대 추측하거나 창작하지 않습니다.
-   없는 항목은 "-"로 표시합니다.
-4. 객관적 · 사실 기반 문장으로 작성합니다.
-   "아마도" · "가능성이 있습니다" 같은 모호한 표현은 금지합니다.
-   단, 시뮬레이션 기반 예측값을 서술할 때는 "시뮬레이션 기준" 또는 "예측값"임을 명시합니다.
-5. 능동태와 단문을 사용합니다. 한 문장은 최대 두 줄을 넘지 않습니다.
-6. 서론 · 결론 · 부연 설명은 추가하지 않습니다.
-7. 문체는 "~됨", "~함", "~임"으로 통일합니다. (~습니다 · ~이다 · ~합니다 금지)
+1. 반드시 한국어. 장비명·KPI·Lot명·대응안 종류는 원문 유지.
+2. 제공된 수치는 그대로 사용. 반올림·단위변환·재계산 금지.
+3. 데이터에 없는 내용은 절대 추측·창작 금지. 없으면 '-' 또는 생략.
+4. 객관적·사실 기반 단문. "아마도" "가능성이 있습니다" 금지.
+   단, 시뮬레이션 예측값은 "시뮬레이션 기준" 또는 "예측값" 명시.
+5. 능동태 단문. 한 문장 최대 두 줄.
+6. 서론·결론·부연 설명 추가 금지.
+7. 문체 통일: "~됨", "~함", "~임". (~습니다 · ~이다 · ~합니다 금지)
 
-[출력 규칙]
-- Markdown 형식만 출력합니다.
-- 출력 앞뒤에 "다음은 보고서입니다" · "이상으로 마칩니다" 등의 문장을 붙이지 않습니다.
-- ```markdown 코드블록으로 감싸지 않습니다.
-- 지시된 섹션 구조 외에 임의로 섹션을 추가하거나 삭제하지 않습니다.
-- 표의 컬럼명과 순서는 지시된 형식 그대로 유지합니다.
-
-[금지 사항]
-- 데이터에 없는 원인 · 수치 · 대응안 창작 금지
-- 수치 변경 · 단위 변환 금지
-- 영어와 한국어 혼용 금지 (지정된 FAB 용어 제외)
-- 지시된 형식 이외의 내용 추가 금지"""
+[금지 사항 — 매우 중요]
+- 마크다운 표(| ... |) 작성 금지. 표는 별도 코드가 만듭니다.
+- 마크다운 헤더(##, ###) 작성 금지. 섹션 구조는 코드가 만듭니다.
+- 수치 환각 금지. 입력 데이터에 없는 숫자는 절대 만들지 않습니다.
+- 영어와 한국어 혼용 금지(지정된 FAB 용어 제외)."""
 
 
-# ── LLM Node 함수들 ───────────────────────────────────────────────────────────
+# ── 핵심 LLM 호출 ────────────────────────────────────────────────────────────
 
-def write_summary(state: ReportState) -> dict:
-    """1. 요약 — 3줄 핵심 요약 + 핵심 지표"""
-    bi = state.get("bottleneck_info") or {}
-    section = _llm_write(
-        _SYS,
-        f"""아래 데이터를 바탕으로 FAB 병목 보고서의 '요약' 섹션을 작성하세요.
+def narrate(report_v2: ReportV2) -> ReportNarration:
+    """단일 LLM 호출로 4개 narrative 동시 생성 (structured output).
 
-공정명: {state['process_name']}
-심각도: {state['severity']}
-데이터: {json.dumps(bi, ensure_ascii=False)}
+    실패 시 결정론적 fallback narration을 반환한다.
+    """
+    llm = _get_llm().with_structured_output(ReportNarration)
+    user_prompt = _build_user_prompt(report_v2)
 
-출력 형식 (이 형식 그대로):
+    try:
+        result = llm.invoke([
+            {"role": "system", "content": _SYS_NARRATE},
+            {"role": "user", "content": user_prompt},
+        ])
+        if not isinstance(result, ReportNarration):
+            result = ReportNarration.model_validate(result)
+        return result
+    except Exception:
+        return _fallback_narration(report_v2)
 
-## 1. 요약
 
-> **[핵심 요약 1줄: 병목 상황 + risk_score 언급]**
-> **[핵심 요약 2줄: 생산 영향 + load_ratio 언급]**
-> **[핵심 요약 3줄: 긴급 조치 필요성]**
+def _build_user_prompt(report_v2: ReportV2) -> str:
+    """LLM에게 ReportV2의 핵심 데이터만 보여준다.
 
-| 지표 | 값 |
-|------|----|
-| 심각도 | {state['severity']} |
-| risk_score | {bi.get('risk_score', '-')} |
-| load_ratio (wait_ratio) | {bi.get('load_ratio', '-')} |
-| 지연 주문 수 | {bi.get('delayed_orders', '-')}건 |
-| 현재 평균 대기시간 | {bi.get('avg_queue_time_min', '-')}분 |
-| 최대 대기시간 | {bi.get('peak_q_time_min', '-')}분 |
-| WIP | {bi.get('wip_count', '-')}개 |
-| 가동률 | {bi.get('utilization_pct', '-')}% |
-| 가용 호기 비율 | {bi.get('available_tool_ratio', '-')} |
+    표 데이터 전체를 다 넣지 않는다 — 표는 코드가 만들고, LLM은
+    narrative에 필요한 핵심 사실만 받는다. 토큰 절약 + 환각 방지.
+    """
+    meta = report_v2.meta
+    risk = report_v2.risk
+    diffusion = report_v2.diffusion
+    cause = report_v2.cause
+    actions = report_v2.actions
+    inact = report_v2.if_no_action
 
----""",
+    cause_snip = {}
+    if cause:
+        cause_snip = {
+            "summary": cause.summary,
+            "primary": cause.primary.model_dump() if cause.primary else None,
+            "secondary_categories": cause.secondary_categories,
+            "dismissed": [d.model_dump() for d in cause.dismissed],
+            "needs_more_data": cause.needs_more_data,
+            "consensus_axes": cause.consensus_axes.model_dump() if cause.consensus_axes else None,
+        }
+
+    actions_snip = {
+        "available": actions.available,
+        "decision_status": actions.decision_status,
+        "approved_label": actions.approved_label,
+        "approved_candidate": None,
+    }
+    if actions.available:
+        approved = next((c for c in actions.candidates if c.is_approved), None)
+        if approved:
+            actions_snip["approved_candidate"] = {
+                "label": approved.label,
+                "kind": approved.kind,
+                "description": approved.description,
+                "kpi_impact_summary": [
+                    {
+                        "kpi": k.kpi,
+                        "now": k.now,
+                        "after": k.after,
+                        "delta": k.delta,
+                        "pct_change": k.pct_change,
+                        "unit": k.unit,
+                        "verdict": k.verdict,
+                    }
+                    for k in approved.kpi_impact
+                ],
+            }
+
+    approval = report_v2.approval
+    approval_snip = approval.model_dump() if approval else None
+
+    import json as _json
+    payload = {
+        "process_name": meta.process_name,
+        "severity": meta.severity,
+        "risk_score": risk.score,
+        "if_no_action": inact.model_dump(),
+        "bottleneck_kpis_summary": [
+            {"key": k.key, "value": k.value, "unit": k.unit, "delta": k.delta}
+            for k in report_v2.bottleneck_kpis
+        ],
+        "diffusion": {
+            "bottleneck_location": diffusion.bottleneck_location if diffusion else None,
+            "diffusion_path": diffusion.diffusion_path if diffusion else [],
+            "line_stop_expected_min": diffusion.line_stop_expected_min if diffusion else None,
+            "high_impact_count": len(diffusion.high_impact_processes) if diffusion else 0,
+        },
+        "bottleneck_trend": [t.model_dump() for t in report_v2.bottleneck_trend],
+        "cause": cause_snip,
+        "actions": actions_snip,
+        "approval": approval_snip,
+    }
+    return (
+        "아래 보고서 데이터를 바탕으로 4개 섹션의 narrative만 작성하세요.\n"
+        "표는 만들지 마세요 — 코드가 만듭니다.\n\n"
+        f"```json\n{_json.dumps(payload, ensure_ascii=False, indent=2)}\n```"
     )
-    return {"section_summary": section}
 
 
-def write_diffusion(state: ReportState) -> dict:
-    """2. 확산 영향 분석"""
-    da = state.get("diffusion_analysis") or {}
-    fab = state.get("fab_kpi", {})
-    trend = state.get("bottleneck_trend", [])
-    section = _llm_write(
-        _SYS,
-        f"""아래 데이터를 바탕으로 '확산 영향 분석' 섹션을 작성하세요.
-
-확산 데이터: {json.dumps(da, ensure_ascii=False)}
-FAB 전체 KPI: {json.dumps(fab, ensure_ascii=False)}
-병목 추이 데이터: {json.dumps(trend, ensure_ascii=False)}
-
-출력 형식 (이 형식 그대로):
-
-## 2. 확산 영향 분석
-
-**탐지시각**: {state['detected_at']}
-
-### ① 병목 발생 여부 및 위치
-[병목 발생 여부와 정확한 위치를 한 문장으로 서술]
-- **확산 경로**: [diffusion_path 항목을 → 화살표로 연결하여 한 줄로 표기]
-
-### ② 확산 현황 (공정별 가동률 현황)
-
-| 공정 | 가동률(%) | wait_ratio | WIP | 상태 |
-|------|-----------|-----------|-----|------|
-[affected_processes 데이터를 행으로 채울 것. utilization_pct·wait_ratio·wip 값 사용. 값 없으면 -]
-
-### ③ 위험도 및 전 라인 정지 예상 시간
-- **위험도**: {da.get('risk_level', '-')}
-- **전 라인 정지 예상**: {da.get('line_stop_expected_min', '-')}분 이내
-- [위험도에 대한 한 줄 해석]
-- **병목 추이**: [bottleneck_trend 데이터를 보고 Q-time과 WIP가 심화/완화/유지 중인지 한 문장으로 요약]
-
-### ④ 병목 공정 KPI 현황
-
-| 지표 | 값 |
-|------|----|
-| 전체 WIP | {fab.get('wip_total', '-')}개 |
-| 평균 가동률 | {fab.get('utilization_avg_pct', '-')}% |
-| 평균 대기시간 | {fab.get('q_time_min', '-')}분 |
-| wait_ratio | {fab.get('wait_ratio', '-')} |
-
-### ⑤ Forward Simulation ({da.get('forward_simulation', {}).get('horizon_min', 120)}분 후 예측)
-
-| Tool Group | q_time (미래) | wait_ratio (미래) | WIP (미래) | 병목 예측 |
-|------------|-------------|-----------------|----------|----------|
-[forward_simulation.results 데이터를 행으로 채울 것. q_time_future·wait_ratio_future·wip_future 값 사용. y_bottleneck=1이면 ✅ 병목, 0이면 ✅ 정상. forward_simulation이 비어 있으면 "| - | - | - | - | - |" 한 행만 출력]
-
----""",
+def _fallback_narration(report_v2: ReportV2) -> ReportNarration:
+    """LLM 호출 실패 시 결정론적 narration. 'LLM 실패' 표시 포함."""
+    meta = report_v2.meta
+    risk = report_v2.risk
+    return ReportNarration(
+        tldr_3lines=[
+            f"{meta.process_name}에서 {meta.severity} 수준 병목이 감지됨 (risk_score {risk.score}).",
+            "정확한 영향·KPI는 아래 표 참조.",
+            "[LLM narrative 생성 실패 — 데이터만 표시됨]",
+        ],
+        diffusion_interpretation="[LLM narrative 생성 실패 — 표 데이터만 표시됨]",
+        cause_judgment="[LLM narrative 생성 실패 — 표 데이터만 표시됨]",
+        actions_summary="[LLM narrative 생성 실패 — 표 데이터만 표시됨]",
     )
-    return {"section_diffusion": section}
 
 
-def write_cause(state: ReportState) -> dict:
-    """3. 원인 분석 TOP 3"""
-    ca = state.get("cause_analysis") or {}
-    ft = state.get("feature_trend", [])
-    ts = state.get("trend_stats", [])
-    shap = state.get("shap_analysis", {})
-    section = _llm_write(
-        _SYS,
-        f"""아래 데이터를 바탕으로 '원인 분석 TOP 3' 섹션을 작성하세요.
+# ── 표 렌더링 (결정론적, 코드만) ──────────────────────────────────────────────
 
-원인 요약: {ca.get("summary", "")}
-SHAP 기여도 순위: {json.dumps(ca.get("shap_top", []), ensure_ascii=False)}
-컨센서스 판정: {json.dumps(ca.get("consensus"), ensure_ascii=False)}
-LLM 판정 근거: {json.dumps(ca.get("judgment"), ensure_ascii=False)}
-증거 번들 (4가지 분석 수렴): {json.dumps(ca.get("evidence_bundle", []), ensure_ascii=False)}
-업스트림 과부하 공정: {json.dumps(ca.get("upstream_suspects", []), ensure_ascii=False)}
-feature 트렌드 데이터: {json.dumps(ft, ensure_ascii=False)}
-트렌드 통계 (slope·R²): {json.dumps(ts, ensure_ascii=False)}
-ML SHAP 분석: {json.dumps(shap, ensure_ascii=False)}
+def _md_cell(v) -> str:
+    """마크다운 셀 표시. None / "" → '-'."""
+    if v is None or v == "":
+        return "-"
+    if isinstance(v, bool):
+        return "✅" if v else "❌"
+    if isinstance(v, float):
+        # 자연스러운 소수점: 정수면 int, 아니면 4자리
+        if v.is_integer():
+            return str(int(v))
+        return f"{v:.4g}"
+    return str(v)
 
-출력 형식 (이 형식 그대로):
 
-## 3. 원인 분석 TOP 3
+def _render_kpi_table(report_v2: ReportV2) -> str:
+    """## 1. 요약 — 핵심 지표 표."""
+    bn_info_rows = []
+    bn_info_rows.append(("심각도", report_v2.meta.severity))
+    if report_v2.risk.score is not None:
+        bn_info_rows.append(("risk_score", _md_cell(report_v2.risk.score)))
 
-| 순위 | 원인(feature) | 기여도(%) | 현재값 | 4개 분석 수렴 | 신뢰도 |
-|------|--------------|----------|--------|-------------|--------|
-[shap_top의 rank·feature·contribution_pct·kpi_value를 행으로. evidence_bundle에서 해당 feature의 votes(예: "3/4")와 confidence를 매핑하여 채울 것. evidence_bundle에 없으면 "-"]
+    # KPI 카드 → 표
+    kpi_label_map = {
+        "q_time_min": "현재 평균 대기시간",
+        "wait_ratio": "load_ratio (wait_ratio)",
+        "wip": "WIP",
+        "utilization_avg": "가동률",
+        "available_tool_ratio": "가용 호기 비율",
+        "max_util": "최대 가동률",
+    }
+    for card in report_v2.bottleneck_kpis:
+        if card.key == "risk_score":
+            continue
+        label = kpi_label_map.get(card.key, card.label)
+        unit_suffix = ""
+        if card.key == "q_time_min":
+            unit_suffix = "분"
+        elif card.key == "utilization_avg" or card.key == "max_util":
+            # 비율을 % 로 표시
+            if card.value is not None:
+                display = f"{card.value * 100:.1f}%"
+                bn_info_rows.append((label, display))
+                continue
+        elif card.key == "wip":
+            unit_suffix = "개"
+        bn_info_rows.append((label, _md_cell(card.value) + unit_suffix))
 
-### 판정 근거
-[judgment.primary_reasoning을 그대로 서술. 이어서 secondary_causes가 있으면 "보조 원인: X, Y", dismissed가 있으면 "기각: Z (이유: dismissed_reason)" 형식으로 추가]
+    lines = ["| 지표 | 값 |", "|------|----|"]
+    for label, val in bn_info_rows:
+        lines.append(f"| {label} | {val} |")
+    return "\n".join(lines)
 
-### 업스트림 과부하 공정
-[upstream_suspects 목록이 있으면 "과부하 공정: A → B → C (WIP 과공급으로 병목 TG에 유입)" 형식으로. 없으면 "업스트림 과부하 공정 없음"]
 
-### 4가지 분석 수렴 증거
+def _render_affected_table(report_v2: ReportV2) -> str:
+    """확산 — 공정별 가동률 표 (high_impact 상위)."""
+    diffusion = report_v2.diffusion
+    if diffusion is None or not diffusion.high_impact_processes:
+        return "| 공정 | 가동률(%) | wait_ratio | WIP | 상태 |\n|------|-----------|-----------|-----|------|\n| - | - | - | - | - |"
 
-| 피처 | SHAP | 트렌드 유의 | 업스트림 일치 | G* 유의 | 수렴 수 | 신뢰도 |
-|------|------|-----------|------------|--------|--------|--------|
-[evidence_bundle 데이터를 행으로. SHAP은 shap_value(+면 ↑병목, -면 ↓완화), 트렌드·G* 유의는 ✅/❌, 업스트림은 ✅/❌, 수렴 수는 votes/4]
+    lines = ["| 공정 | 가동률(%) | wait_ratio | WIP | 상태 |", "|------|-----------|-----------|-----|------|"]
+    for p in diffusion.high_impact_processes:
+        status = "영향"
+        if p.data_quality_flags:
+            status = f"영향 ⚠️ {','.join(p.data_quality_flags)}"
+        lines.append(
+            f"| {p.toolgroup} | {_md_cell(p.utilization_pct)} | "
+            f"{_md_cell(p.wait_ratio)} | {_md_cell(p.wip)} | {status} |"
+        )
+    return "\n".join(lines)
 
-### ML 모델 SHAP 분석 (Top 3 Feature)
-> 모델: {shap.get('model', '-')}
 
-| 피처명 | 현재값 | 기여도(%) | 방향 |
-|--------|--------|----------|------|
-[shap_analysis.top_features를 행으로 채울 것. feature·value·share_abs_pct·direction 값 사용]
+def _render_forward_sim_table(report_v2: ReportV2) -> str:
+    diffusion = report_v2.diffusion
+    if diffusion is None or not diffusion.forward_simulation.available:
+        return "| Tool Group | wait_ratio (미래) | WIP (미래) | 병목 예측 |\n|------------|-----------------|----------|----------|\n| - | - | - | - |"
 
-### feature 트렌드 (탐지 전 4시간)
+    fwd = diffusion.forward_simulation
+    lines = ["| Tool Group | wait_ratio (미래) | WIP (미래) | 병목 예측 |",
+             "|------------|-----------------|----------|----------|"]
+    for r in fwd.results:
+        bn = "✅ 병목" if r.is_bottleneck_predicted else "✅ 정상"
+        lines.append(
+            f"| {r.toolgroup} | {_md_cell(r.wait_ratio_future)} | "
+            f"{_md_cell(r.wip_future)} | {bn} |"
+        )
+    return "\n".join(lines)
 
-| 시각 | q_time_min | wait_ratio | wip | max_util |
-|------|-----------|-----------|-----|---------|
-[feature_trend 데이터를 행으로 채울 것. 값 없는 feature는 -]
 
-### 트렌드 악화 속도
+def _render_top_causes_table(report_v2: ReportV2) -> str:
+    cause = report_v2.cause
+    if cause is None or not cause.shap_top:
+        return "| 순위 | 원인(feature) | 기여도(%) | 현재값 |\n|------|--------------|----------|--------|\n| - | - | - | - |"
 
-| 피처 | 시간당 변화율 | R² | 통계 유의 |
-|------|------------|-----|---------|
-[trend_stats 데이터를 행으로. slope_per_hour는 부호 포함(예: +12.4/h), r2는 소수 2자리, significant는 ✅/❌. slope_per_hour > 0이면 악화, < 0이면 개선 방향으로 해석]
+    # evidence_matrix에서 votes/confidence 보강
+    evid_map = {e.feature: e for e in cause.evidence_matrix}
+    lines = ["| 순위 | 원인(feature) | 기여도(%) | 현재값 | 4개 분석 수렴 | 신뢰도 |",
+             "|------|--------------|----------|--------|-------------|--------|"]
+    for s in cause.shap_top[:5]:
+        e = evid_map.get(s.feature)
+        votes = f"{e.votes}/4" if e else "-"
+        conf = e.confidence if e else "-"
+        lines.append(
+            f"| {s.rank} | {s.feature} | {_md_cell(s.contribution_pct)} | "
+            f"{_md_cell(s.value)} | {votes} | {conf} |"
+        )
+    return "\n".join(lines)
 
----""",
+
+def _render_shap_table(report_v2: ReportV2) -> str:
+    cause = report_v2.cause
+    if cause is None or not cause.shap_top:
+        return "| 피처명 | 현재값 | 기여도(%) | 방향 |\n|--------|--------|----------|------|\n| - | - | - | - |"
+
+    lines = ["| 피처명 | 현재값 | 기여도(%) | 방향 |", "|--------|--------|----------|------|"]
+    for s in cause.shap_top[:5]:
+        direction = "병목 쪽으로 기여(+)" if s.direction_token and s.direction_token.value == "bottleneck_positive" else "병목 완화(-)"
+        lines.append(
+            f"| {s.feature} | {_md_cell(s.value)} | {_md_cell(s.contribution_pct)} | {direction} |"
+        )
+    return "\n".join(lines)
+
+
+def _render_trend_table(report_v2: ReportV2) -> str:
+    if not report_v2.bottleneck_trend:
+        return "| 시각 | (데이터 없음) |\n|------|--------------|"
+
+    points = report_v2.bottleneck_trend
+    feat_keys = list(points[0].values.keys())
+    if not feat_keys:
+        return "| 시각 | (데이터 없음) |\n|------|--------------|"
+
+    header = "| 시각 | " + " | ".join(feat_keys) + " |"
+    sep = "|------|" + "---------|" * len(feat_keys)
+    lines = [header, sep]
+    for p in points:
+        cells = [p.time_label] + [_md_cell(p.values.get(k)) for k in feat_keys]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def _render_trend_stats_table(report_v2: ReportV2) -> str:
+    cause = report_v2.cause
+    if cause is None or cause.trend_series is None or not cause.trend_series.features:
+        return "| 피처 | 시간당 변화율 | R² | 통계 유의 |\n|------|------------|-----|---------|\n| - | - | - | - |"
+
+    lines = ["| 피처 | 시간당 변화율 | R² | 통계 유의 |", "|------|------------|-----|---------|"]
+    for feat, info in cause.trend_series.features.items():
+        slope = info.slope_per_hour
+        slope_disp = "-" if slope is None else (f"+{slope:.4g}/h" if slope >= 0 else f"{slope:.4g}/h")
+        r2_disp = _md_cell(info.r2)
+        sig = "✅" if info.significant else "❌"
+        lines.append(f"| {feat} | {slope_disp} | {r2_disp} | {sig} |")
+    return "\n".join(lines)
+
+
+def _render_evidence_table(report_v2: ReportV2) -> str:
+    cause = report_v2.cause
+    if cause is None or not cause.evidence_matrix:
+        return "| 피처 | SHAP | 트렌드 유의 | 업스트림 일치 | G* 유의 | 수렴 수 | 신뢰도 |\n|------|------|-----------|------------|--------|--------|--------|\n| - | - | - | - | - | - | - |"
+
+    lines = ["| 피처 | SHAP | 트렌드 유의 | 업스트림 일치 | G* 유의 | 수렴 수 | 신뢰도 |",
+             "|------|------|-----------|------------|--------|--------|--------|"]
+    for e in cause.evidence_matrix[:8]:
+        shap_arrow = "-" if e.shap_value is None else (f"+{e.shap_value:.4g}" if e.shap_value >= 0 else f"{e.shap_value:.4g}")
+        lines.append(
+            f"| {e.feature} | {shap_arrow} | {_md_cell(e.trend_significant)} | "
+            f"{_md_cell(e.upstream_match)} | {_md_cell(e.g_star_significant)} | "
+            f"{e.votes}/4 | {e.confidence} |"
+        )
+    return "\n".join(lines)
+
+
+def _render_candidates_compare_table(report_v2: ReportV2) -> str:
+    actions = report_v2.actions
+    if not actions.candidates:
+        return "| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 시뮬 신뢰도 | 운영 부담 | 영향 범위 | 가역성 |\n|--------|------|------|-------------|---------|-----------|----------|----------|--------|\n| - | - | - | - | - | - | - | - | - |"
+
+    lines = ["| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 시뮬 신뢰도 | 운영 부담 | 영향 범위 | 가역성 |",
+             "|--------|------|------|-------------|---------|-----------|----------|----------|--------|"]
+    for c in actions.candidates:
+        label = c.label + (" ✅" if c.is_approved else "")
+        kind = c.kind
+        desc = (c.description or "")[:40]
+        q_kpi = next((k for k in c.kpi_impact if k.kpi == "q_time_min"), None)
+        wip_kpi = next((k for k in c.kpi_impact if k.kpi == "wip"), None)
+        q_delta = _md_cell(q_kpi.delta) + "분" if q_kpi and q_kpi.delta is not None else "-"
+        wip_delta = _md_cell(wip_kpi.delta) if wip_kpi and wip_kpi.delta is not None else "-"
+        sim_conf = "-"
+        if c.simulation and c.simulation.confidence is not None:
+            sim_conf = f"{int(c.simulation.confidence * 100)}%"
+        op_effort = "-"
+        op_scope = "-"
+        op_rev = "-"
+        if c.operational:
+            op_effort = f"{c.operational.effort}/{c.operational.effort_max}" if c.operational.effort is not None else "-"
+            op_scope = c.operational.scope or "-"
+            op_rev = c.operational.reversibility or "-"
+        lines.append(
+            f"| {label} | {kind} | {desc} | {q_delta} | {wip_delta} | "
+            f"{sim_conf} | {op_effort} | {op_scope} | {op_rev} |"
+        )
+    return "\n".join(lines)
+
+
+# ── 섹션 렌더링 (narrative + 표를 합쳐 마크다운 섹션 생성) ────────────────────
+
+def _render_summary(report_v2: ReportV2, narration: ReportNarration) -> str:
+    quote = "\n".join(f"> **{line}**" for line in narration.tldr_3lines)
+    return (
+        "## 1. 요약\n\n"
+        f"{quote}\n\n"
+        f"{_render_kpi_table(report_v2)}\n\n"
+        "---"
     )
-    return {"section_cause": section}
 
 
-def write_actions(state: ReportState) -> dict:
-    """4. 승인된 대응안 — 의사결정 상태 + 효과 요약 + 트레이드오프 + 비교표"""
-    effects = state.get("action_effects") or []
-    rec = state.get("recommendation") or {}
-    ai = state.get("approval_info") or {}
-    decision_info = state.get("decision_info") or {}
-    is_rejected = ai.get("status") == "반려"
+def _render_diffusion(report_v2: ReportV2, narration: ReportNarration) -> str:
+    diffusion = report_v2.diffusion
+    fwd_available = diffusion.forward_simulation.available if diffusion else False
+    horizon = diffusion.forward_simulation.horizon_min if (diffusion and fwd_available) else 120
+    path_arrow = " → ".join(diffusion.diffusion_path) if diffusion else "-"
+    risk_lvl = diffusion.risk_level if diffusion else "-"
+    line_stop = diffusion.line_stop_expected_min if diffusion else None
+    line_stop_disp = f"{int(line_stop)}분" if line_stop is not None else "-"
 
-    # 의사결정 상태 배지 (compare_agent에서 결정한 상태)
-    decision_status = decision_info.get("decision_status", "clear_winner")
-    status_badge = {
-        "clear_winner": "✅ 명확한 1위",
-        "equivalent_candidates": "⚠️ 통계적 동등 (운영 부담 tie-break 적용)",
-        "no_meaningful_effect": "🚨 효과 미검증 (운영 부담 최저 잠정 추천)",
-    }.get(decision_status, decision_status)
-    decision_caveat = decision_info.get("decision_caveat", "")
-    equivalent_set = decision_info.get("equivalent_set", [])
+    return (
+        "## 2. 확산 영향 분석\n\n"
+        f"**탐지시각**: {report_v2.meta.detected_at}\n\n"
+        f"### ① 병목 발생 여부 및 위치\n"
+        f"{narration.diffusion_interpretation}\n"
+        f"- **확산 경로**: {path_arrow}\n\n"
+        f"### ② 확산 현황 (공정별 가동률 현황)\n\n"
+        f"{_render_affected_table(report_v2)}\n\n"
+        f"### ③ 위험도 및 전 라인 정지 예상 시간\n"
+        f"- **위험도**: {risk_lvl}\n"
+        f"- **전 라인 정지 예상**: {line_stop_disp} 이내\n\n"
+        f"### ④ 추이 데이터\n\n"
+        f"{_render_trend_table(report_v2)}\n\n"
+        f"### ⑤ Forward Simulation ({horizon}분 후 예측)\n\n"
+        f"{_render_forward_sim_table(report_v2)}\n\n"
+        "---"
+    )
 
-    structured = rec
+
+def _render_cause(report_v2: ReportV2, narration: ReportNarration) -> str:
+    cause = report_v2.cause
+    upstream = (cause.upstream_suspects if cause else []) or []
+    upstream_disp = (
+        f"과부하 공정: {' → '.join(upstream)} (WIP 과공급으로 병목 TG에 유입)"
+        if upstream else "업스트림 과부하 공정 없음"
+    )
+
+    # G* Monte Carlo block
+    gstar_block = ""
+    if cause and cause.g_star:
+        g = cause.g_star
+        if g.monte_carlo:
+            mc = g.monte_carlo
+            gstar_block = (
+                f"\n### G* 인과 확증 (Monte Carlo)\n"
+                f"- **확증 여부**: {'✅ 확정' if g.confirmed else '❌ 미확정'} "
+                f"(probability {_md_cell(g.probability)})\n"
+                f"- **시뮬 결과**: 총 {mc.n_total}회 중 {mc.n_alarm}회 병목 확인 "
+                f"({_md_cell(mc.alarm_ratio_pct)}%)\n"
+            )
+            if g.upstream_confirmed_toolgroups:
+                gstar_block += f"- **업스트림 인과 확증 TG**: {', '.join(g.upstream_confirmed_toolgroups)}\n"
+
+    consensus_block = ""
+    if cause and cause.consensus_axes:
+        ax = cause.consensus_axes
+        consensus_block = (
+            f"\n### 4축 합의 ({ax.axes_agreed_count}/4)\n"
+            f"- SHAP: {'✅' if ax.shap_supports else '❌'} / "
+            f"트렌드: {'✅' if ax.trend_supports else '❌'} / "
+            f"업스트림: {'✅' if ax.upstream_supports else '❌'} / "
+            f"G*: {'✅' if ax.g_star_supports else '❌'}\n"
+        )
+
+    return (
+        "## 3. 원인 분석 TOP\n\n"
+        f"{_render_top_causes_table(report_v2)}\n\n"
+        f"### 판정 근거\n{narration.cause_judgment}\n\n"
+        f"### 업스트림 과부하 공정\n{upstream_disp}\n"
+        f"{consensus_block}"
+        f"{gstar_block}\n"
+        f"### 4가지 분석 수렴 증거\n\n"
+        f"{_render_evidence_table(report_v2)}\n\n"
+        f"### ML 모델 SHAP 분석 (Top features)\n\n"
+        f"{_render_shap_table(report_v2)}\n\n"
+        f"### 트렌드 악화 속도\n\n"
+        f"{_render_trend_stats_table(report_v2)}\n\n"
+        "---"
+    )
+
+
+def _render_actions(report_v2: ReportV2, narration: ReportNarration) -> str:
+    actions = report_v2.actions
+    approval = report_v2.approval
+
+    # 1) 후보가 아예 없는 경우 — PR #1과 동일 결정론적 안내
+    if not actions.available:
+        is_rejected = approval and approval.status_token and approval.status_token.value == "rejected"
+        return _no_actions_section(
+            {"rejection_reason": approval.rejection_reason if approval else None},
+            bool(is_rejected),
+        )
+
+    # 2) 반려된 경우
+    is_rejected = approval and approval.status_token and approval.status_token.value == "rejected"
+
+    # 의사결정 상태 뱃지
+    decision_badge_map = {
+        "winner": "✅ 명확한 1위",
+        "equivalent": "⚠️ 통계적 동등 (운영 부담 tie-break 적용)",
+        "tentative": "🚨 효과 미검증 (운영 부담 최저 잠정 추천)",
+    }
+    decision_label = "-"
+    if actions.decision_status_token:
+        decision_label = decision_badge_map.get(
+            actions.decision_status_token.value, actions.decision_status
+        )
+
+    # 추천 신뢰도
+    rec = actions.recommendation
+    confidence_disp = "-"
+    if rec and rec.confidence_level:
+        confidence_disp = rec.confidence_level
 
     if is_rejected:
-        rejection_reason = ai.get("rejection_reason", "-")
-        section = _llm_write(
-            _SYS,
-            f"""아래 데이터를 바탕으로 '승인된 대응안' 섹션을 작성하세요. 반려된 상황입니다.
-
-반려 사유: {rejection_reason}
-의사결정 상태: {status_badge}
-{f"  사유: {decision_caveat}" if decision_caveat else ""}
-전체 대응안 비교: {json.dumps(effects, ensure_ascii=False)}
-
-출력 형식 (이 형식 그대로):
-
-## 4. 승인된 대응안
-
-### ① 의사결정 상태
-- **상태**: {status_badge}
-{f"- **사유**: {decision_caveat}" if decision_caveat else ""}
-
-### ② 승인된 대응안 예상 효과
-승인된 대응안 없음. (반려됨)
-- **반려 사유**: {rejection_reason}
-
-### ③ 대응안 A / B / C 비교
-
-| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 시뮬 신뢰도(%) | 통계 검정 |
-|--------|------|------|-------------|---------|--------------|---------|
-[각 대응안을 행으로. simulation_confidence는 % 단위. 통계 검정은 verdict(improved→"유의 개선", worsened→"유의 악화", unchanged→"변화 없음")와 paired_t_p를 "유의 개선 (p=0.003)" 형식으로. verdict나 paired_t_p 없으면 "-"]
-
-### ③ KPI별 상세 검증 결과 (30회 paired t-test)
-
-| 대응안 | KPI | 평균 변화 | 95% CI | p-value | 판정 |
-|--------|-----|---------|--------|---------|------|
-[effects의 각 대응안(label)별로 kpi_full_stats의 KPI를 행으로 나열. mean_delta(부호 포함), ci_lo~ci_hi 범위, paired_t_p, verdict(improved→"✅ 개선", worsened→"⚠️ 악화", unchanged→"변화없음"). kpi_full_stats 없으면 해당 행 생략]
-
----""",
+        rej_reason = approval.rejection_reason or "-"
+        header = (
+            "## 4. 승인된 대응안\n\n"
+            f"### ① 의사결정 상태\n- **상태**: {decision_label}\n\n"
+            f"### ② 승인된 대응안 예상 효과\n"
+            f"승인된 대응안 없음. (반려됨)\n"
+            f"- **반려 사유**: {rej_reason}\n\n"
         )
     else:
-        action_label = rec.get("action_label", "")
-        approved = next(
-            (e for e in effects if e.get("label", "").split()[0] == action_label),
-            effects[0] if effects else {}
+        # 승인된 대응안 narrative
+        approved = next((c for c in actions.candidates if c.is_approved), None)
+        kind = approved.kind if approved else "-"
+        desc = approved.description if approved else "-"
+        primary_reason = rec.primary_reason if rec else "-"
+        header = (
+            "## 4. 승인된 대응안\n\n"
+            f"### ① 의사결정 상태\n"
+            f"- **상태**: {decision_label}\n"
+            f"- **추천 신뢰도**: {confidence_disp}\n\n"
+            f"### ② 승인된 대응안 예상 효과\n"
+            f"- **대응안**: {kind} — {desc}\n"
+            f"- **핵심 근거**: {primary_reason}\n"
+            f"- **예상 효과 요약**: {narration.actions_summary}\n\n"
         )
-        lots = state.get("affected_lots_detail", [])
-        section = _llm_write(
-            _SYS,
-            f"""아래 데이터를 바탕으로 '승인된 대응안' 섹션을 작성하세요.
 
-승인된 대응안: {json.dumps(approved, ensure_ascii=False)}
-선택 이유 (요약): {rec.get('reason', '-')}
-구조화 추천 근거 (헤드라인/주된 근거/트레이드오프/다른 후보 사유/주의사항/신뢰도):
-{json.dumps(structured, ensure_ascii=False)}
-의사결정 상태: {status_badge}
-{f"  사유: {decision_caveat}" if decision_caveat else ""}
-{f"  등가 후보: {', '.join(equivalent_set)}" if len(equivalent_set) >= 2 else ""}
-전체 대응안 비교: {json.dumps(effects, ensure_ascii=False)}
-영향 Lot 상세: {json.dumps(lots, ensure_ascii=False)}
+    # 트레이드오프 / 다른 후보 / 주의사항
+    tradeoffs_block = ""
+    if rec and rec.tradeoffs:
+        tradeoffs_block = "### ③ 받아들이는 트레이드오프\n" + "\n".join(f"- {t}" for t in rec.tradeoffs) + "\n\n"
+    else:
+        tradeoffs_block = "### ③ 받아들이는 트레이드오프\n- 통계적으로 유의미한 악화 KPI 없음\n\n"
 
-출력 형식 (이 형식 그대로):
+    why_not_block = ""
+    if rec and rec.why_not_others:
+        why_not_block = "### ④ 다른 후보를 선택하지 않은 이유\n" + "\n".join(
+            f"- **{w.label}**: {w.reason}" for w in rec.why_not_others
+        ) + "\n\n"
+    else:
+        why_not_block = "### ④ 다른 후보를 선택하지 않은 이유\n- -\n\n"
 
-## 4. 승인된 대응안
+    caveats_block = ""
+    if rec and rec.caveats:
+        caveats_block = "### ⑤ 주의사항\n" + "\n".join(f"- {c}" for c in rec.caveats) + "\n\n"
+    else:
+        caveats_block = "### ⑤ 주의사항\n- 특이사항 없음\n\n"
 
-### ① 의사결정 상태
-- **상태**: {status_badge}
-- **추천 신뢰도**: {structured.get('confidence_level', '-')}
-{f"- **사유**: {decision_caveat}" if decision_caveat else ""}
+    # Playbook (PR #2에서 새로 추가)
+    pb = actions.playbook
+    playbook_block = ""
+    if pb and pb.available:
+        playbook_block = "### ⑥ 현장 Playbook\n\n#### 즉시 실행\n"
+        for a in pb.immediate_actions:
+            playbook_block += f"{a.order}. {a.text}\n"
+        if pb.monitoring:
+            playbook_block += "\n#### 모니터링\n"
+            for m in pb.monitoring:
+                target_disp = _md_cell(m.target) + (f" {m.unit}" if m.unit else "")
+                playbook_block += f"- T+{m.check_after_min}분: {m.kpi} ≤ {target_disp}\n"
+        if pb.rollback_condition:
+            playbook_block += f"\n#### 롤백 조건\n- ⚠️ {pb.rollback_condition}\n"
+        playbook_block += "\n"
 
-### ② 승인된 대응안 예상 효과
-- **대응안**: {approved.get('action_kind')} — {approved.get('description')}
-- **헤드라인**: {structured.get('headline', rec.get('reason', '-'))}
-- **핵심 근거**: {structured.get('primary_reason', '-')}
-- **예상 효과 요약**: [kpi_delta를 해석하여 한 문장으로]
-- **통계 검정**: [approved의 verdict·paired_t_p·ci_lo·ci_hi·paired_n을 사용하여 "30회 paired t-test 결과 유의미한 개선 확인 (p=0.003, 95% CI: [-12.3, -8.1]분, n=30)" 형식으로 한 문장. paired_t_p 없으면 생략]
+    # 대응안 비교표
+    compare_block = (
+        "### ⑦ 대응안 비교\n\n"
+        f"{_render_candidates_compare_table(report_v2)}\n\n"
+    )
 
-### ③ 받아들이는 트레이드오프
-[structured.tradeoffs가 비어있지 않으면 각 항목을 bullet로. 비어있으면 "- 통계적으로 유의미한 악화 KPI 없음" 한 줄]
+    return (
+        f"{header}"
+        f"{tradeoffs_block}"
+        f"{why_not_block}"
+        f"{caveats_block}"
+        f"{playbook_block}"
+        f"{compare_block}"
+        "---"
+    )
 
-### ④ 다른 후보를 선택하지 않은 이유
-[structured.why_not_others의 각 항목을 "- **{{label}}**: {{reason}}" 형식으로]
 
-### ⑤ 주의사항
-[structured.caveats를 bullet로. 비어있으면 "- 특이사항 없음"]
+def render_sections(report_v2: ReportV2, narration: ReportNarration) -> dict[str, str]:
+    """4개 섹션 마크다운을 한 번에 생성. 표는 코드, narrative는 LLM."""
+    return {
+        "summary":   _render_summary(report_v2, narration),
+        "diffusion": _render_diffusion(report_v2, narration),
+        "cause":     _render_cause(report_v2, narration),
+        "actions":   _render_actions(report_v2, narration),
+    }
 
-### ⑥ 대응안 A / B / C 비교
 
-| 대응안 | 종류 | 설명 | 대기시간 변화 | WIP 변화 | 시뮬 신뢰도 | 운영 부담 | 영향 범위 | 가역성 |
-|--------|------|------|-------------|---------|-----------|----------|----------|--------|
-[각 대응안을 행으로. action_metadata.effort/4 로 운영 부담, action_metadata.scope 로 영향 범위, action_metadata.reversibility 로 가역성 표기. 승인된 것(label={rec.get('action_label')})에는 ✅ 표시. simulation_confidence는 % 단위]
----""",
+# ── PR #1에서 추가된 결정론적 fallback (보존) ────────────────────────────────
+
+def _no_actions_section(approval_info: dict, is_rejected: bool) -> str:
+    """업스트림이 대응안 후보를 만들지 못한 경우의 결정론적 섹션."""
+    if is_rejected:
+        reason = approval_info.get("rejection_reason") or "-"
+        return (
+            "## 4. 승인된 대응안\n\n"
+            "### ① 의사결정 상태\n"
+            "- **상태**: 반려됨\n\n"
+            "### ② 승인된 대응안\n"
+            "승인된 대응안 없음. (반려됨)\n"
+            f"- **반려 사유**: {reason}\n\n"
+            "---"
         )
-    return {"section_actions": section}
+    return (
+        "## 4. 승인된 대응안\n\n"
+        "### ① 의사결정 상태\n"
+        "- **상태**: 대응안 후보 없음 — 업스트림(compare_agent)에서 검증된 후보가 생성되지 않음\n\n"
+        "### ② 안내\n"
+        "이 보고서는 병목 감지·원인·확산 분석까지 수행되었으나, "
+        "효과 검증을 통과한 대응안 후보가 도출되지 않아 대응안 섹션은 비워둡니다.\n"
+        "- 시뮬레이션 결과 또는 데이터 품질을 확인한 뒤 재실행을 권장합니다.\n\n"
+        "---"
+    )
+
+
+# ── 레거시 API 호환 — node.py가 새 함수로 옮기기 전 단계용 ─────────────────────
+# PR #3 완료 후엔 node.py가 새 narrate / render_sections 만 호출하므로
+# 아래 함수들은 사실상 사용되지 않는다. 안전을 위해 thin wrapper로 유지한다.
+
+def write_summary(state: dict) -> dict:
+    """[DEPRECATED] PR #3 이전 호환용. 신규 코드는 narrate/render_sections 사용."""
+    rv2 = state.get("report_v2")
+    if rv2 is None:
+        return {"section_summary": ""}
+    sections = render_sections(rv2, narrate(rv2))
+    return {"section_summary": sections["summary"]}
+
+
+def write_diffusion(state: dict) -> dict:
+    """[DEPRECATED] 위와 동일."""
+    rv2 = state.get("report_v2")
+    if rv2 is None:
+        return {"section_diffusion": ""}
+    sections = render_sections(rv2, narrate(rv2))
+    return {"section_diffusion": sections["diffusion"]}
+
+
+def write_cause(state: dict) -> dict:
+    """[DEPRECATED] 위와 동일."""
+    rv2 = state.get("report_v2")
+    if rv2 is None:
+        return {"section_cause": ""}
+    sections = render_sections(rv2, narrate(rv2))
+    return {"section_cause": sections["cause"]}
+
+
+def write_actions(state: dict) -> dict:
+    """[DEPRECATED] 위와 동일."""
+    rv2 = state.get("report_v2")
+    if rv2 is None:
+        return {"section_actions": ""}
+    sections = render_sections(rv2, narrate(rv2))
+    return {"section_actions": sections["actions"]}
