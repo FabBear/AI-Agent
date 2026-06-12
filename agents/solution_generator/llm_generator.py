@@ -78,7 +78,7 @@ def _build_user_prompt(
 # ── fallback 템플릿 ───────────────────────────────────────────────────────────
 
 def _safe_fallback(candidates: dict, cause_report: CauseReport) -> dict[str, dict[str, str]]:
-    dominant = cause_report.shap_top[0].feature if cause_report.shap_top else "wip"
+    dominant = candidates["conservative"]["target_kpi"]
     result = {}
     for lv, label in _PLAN_LABELS.items():
         p = candidates[lv]
