@@ -90,14 +90,14 @@ async def send_message(
                 live_status=request.live_status, fab_id=request.fab_id,
             )
             if result:
-                answer = result.get("answer")
-                sources = [ChatSource.model_validate(s) for s in result.get("sources", [])]
-                follow_ups = list(result.get("followUps", []))
-                spoken_summary = result.get("spokenSummary") or None
-                ui = result.get("ui") or None
-                confidence = result.get("confidence") or None
-                warnings = list(result.get("warnings", []))
-                tools_used = list(result.get("toolsUsed", []))
+                answer = result["answer"]
+                sources = [ChatSource.model_validate(s) for s in result["sources"]]
+                follow_ups = list(result["followUps"])
+                spoken_summary = result["spokenSummary"]
+                ui = result["ui"]
+                confidence = result["confidence"]
+                warnings = list(result["warnings"])
+                tools_used = list(result["toolsUsed"])
         except Exception:  # noqa: BLE001 - LLM 오류 시 degraded로 폴백 신호.
             logger.exception("chat answer_chat 실패")
             answer = None

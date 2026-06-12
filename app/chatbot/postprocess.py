@@ -61,7 +61,7 @@ def _number_variants(nums: list[str]) -> set[str]:
         out.add(compact)
         try:
             value = float(compact)
-        except ValueError:
+        except (ValueError, OverflowError):
             continue
         out.add(f"{value:.1f}")
         out.add(f"{value:.2f}")
