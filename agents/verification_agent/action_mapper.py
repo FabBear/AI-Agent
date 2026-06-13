@@ -1,9 +1,10 @@
-"""SolutionCandidate / GlobalSolutionPlan → mes_whatif_action rows 변환.
+"""SolutionCandidate / GlobalSolutionPlan / GlobalCompositeCandidate → mes_whatif_action rows 변환.
 
 FabEnv가 지원하는 action_kind:
   DISPATCH_RULE_OVERRIDE  — 툴그룹 디스패치 규칙 변경
   SET_SUPER_HOT           — lot super_hot 플래그 설정
   LOT_HOLD                — lot 보류
+  LOT_PRIORITY            — lot 우선순위 변경
 
 release_interval은 action row가 아닌 lot_release_plan 복사 시
 배수(multiplier)로 처리.
@@ -14,7 +15,7 @@ from __future__ import annotations
 import json
 
 from agents.schemas.alert import BottleneckAlert
-from agents.schemas.solution import GlobalSolutionPlan, SolutionCandidate
+from agents.schemas.solution import GlobalCompositeCandidate, GlobalSolutionPlan, SolutionCandidate
 
 # lot_priority_rule → DISPATCH_RULE_OVERRIDE 규칙 매핑
 _PRIORITY_RULE_TO_DISPATCH: dict[str, str] = {
@@ -79,6 +80,20 @@ def candidate_to_action_rows(
         })
 
     return rows, release_multiplier
+
+
+def composite_to_action_rows(
+    candidate: GlobalCompositeCandidate,
+    t0: float,
+) -> tuple[list[dict], float]:
+    """GlobalCompositeCandidate → (action_rows, release_interval_multiplier).
+
+    lot_adjustments는 _copy_snapshots()에서 mes_lot_release_plan 열을 직접 업데이트하므로
+    여기서는 action_rows를 빈 리스트로 반환한다.
+    release_interval_multiplier만 계산해서 전달한다.
+    """
+    release_multiplier = 1.0 + candidate.release_interval_delta_pct / 100.0
+    return [], release_multiplier
 
 
 def plan_to_action_rows(

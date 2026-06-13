@@ -1,7 +1,7 @@
-"""TG 단위 Lot Release 파라미터 조합 생성 (보수/표준/강화).
+"""Lot Release 파라미터 조합 생성 (보수/표준/강화).
 
-judgment.primary_category 기반 카테고리 규칙 테이블로 파라미터를 결정한다.
-judgment가 None이면 generate_candidates()가 None을 반환한다.
+신규: generate_global_candidates() — Critical TG 전체를 묶은 글로벌 복합 대응안 3개 생성.
+레거시: generate_candidates() — per-TG 대응안 생성 (하위 호환 유지).
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 from agents import config
 from agents.schemas.alert import BottleneckAlert, SeverityLevel
 from agents.schemas.cause import CauseJudgment, CauseReport
-from agents.schemas.solution import GlobalSolutionPlan
+from agents.schemas.solution import GlobalCompositeCandidate, GlobalSolutionPlan, LotAdjustment
 
 _DEFAULT_INTERVAL = 60.0   # generate_global_plans fallback — 레거시
 _COMPARISON_STEP = 2.0     # generate_global_plans A↔B 차이 — 레거시
@@ -231,6 +231,189 @@ def generate_candidates(
         "escalation_reason": escalation_reason,
     }
 
+
+# ── 글로벌 복합 대응안 생성 ────────────────────────────────────────────────────
+
+# 원인 복잡도별 release_interval_delta_pct (보수/표준/강화)
+_COMPLEXITY_PCT: dict[str, dict[str, float]] = {
+    "single":  {"conservative": 15.0, "standard": 22.0, "aggressive": 28.0},
+    "mixed":   {"conservative": 18.0, "standard": 24.0, "aggressive": 28.0},
+    "complex": {"conservative": 22.0, "standard": 26.0, "aggressive": 28.0},
+}
+
+# 제품별 P25 사이클타임 (분) — 시뮬 완료 lot 통계 기반
+# time_to_due < CT × ratio 이면 해당 구간으로 분류
+_PRODUCT_CT_P25: dict[str, float] = {
+    "Product_3":  75_744.0,   # 52.6일
+    "Product_4":  44_352.0,   # 30.8일
+}
+_CT_FALLBACK_MIN = 75_744.0  # 알 수 없는 제품은 Product_3 기준 사용
+
+_CT_RATIO_DANGER     = 0.70
+_CT_RATIO_WARN_UPPER = 0.90
+_CT_RATIO_WARN_LOWER = 1.10
+
+# 플랜 강도별 lot 분류 상한
+# standard 1.00: 테스트 데이터 클러스터(0.634/0.97)에서 0.70-0.90 구간이 비어있어
+#   0.90 대신 1.00을 써야 Regular lot이 표준 플랜에서도 잡힘
+_PLAN_MAX_RATIO: dict[str, float] = {
+    "conservative": _CT_RATIO_DANGER,      # < CT×0.70 → danger(HotLot급)만
+    "standard":     1.00,                   # < CT×1.00 → warn zone(LOT_PRIORITY)까지
+    "aggressive":   _CT_RATIO_WARN_LOWER,  # < CT×1.10 → 전체
+}
+
+# 플랜별 danger 경계: aggressive만 높여서 Regular lot도 SET_SUPER_HOT 대상으로 확장
+# conservative/standard = 0.70: HotLot급(0.634)만 SET_SUPER_HOT
+# aggressive = 0.97: Product_4(0.960) → SET_SUPER_HOT, Product_3(0.982) → LOT_PRIORITY
+_PLAN_DANGER_RATIO: dict[str, float] = {
+    "conservative": _CT_RATIO_DANGER,  # 0.70
+    "standard":     _CT_RATIO_DANGER,  # 0.70
+    "aggressive":   0.97,
+}
+
+
+def _detect_complexity(
+    target_alerts: list[BottleneckAlert],
+    cause_map: dict[str, CauseReport],
+) -> str:
+    """Critical TG들의 primary_category 집합으로 원인 복잡도 반환."""
+    categories = {
+        cause_map[a.toolgroup].judgment.primary_category
+        for a in target_alerts
+        if a.toolgroup in cause_map
+        and cause_map[a.toolgroup].judgment is not None
+        and cause_map[a.toolgroup].judgment.primary_category is not None
+    }
+    n = len(categories)
+    if n <= 1:
+        return "single"
+    if n == 2:
+        return "mixed"
+    return "complex"
+
+
+def _classify_lot(
+    time_to_due: float,
+    product_name: str,
+    max_ratio: float = _CT_RATIO_WARN_LOWER,
+    danger_ratio: float = _CT_RATIO_DANGER,
+) -> tuple[str, int] | None:
+    """time_to_due(분) + 제품명 → (zone, priority). max_ratio 이상이면 None.
+
+    플랜별 적용 기준:
+      conservative: max_ratio=0.70, danger_ratio=0.70 → HotLot급(0.634)만 SET_SUPER_HOT
+      standard    : max_ratio=1.00, danger_ratio=0.70 → Regular lot을 warn_lower(LOT_PRIORITY)로
+      aggressive  : max_ratio=1.10, danger_ratio=0.97 → Product_4(0.960)→SUPER_HOT, Product_3→warn
+    """
+    ct = _PRODUCT_CT_P25.get(product_name, _CT_FALLBACK_MIN)
+    if time_to_due >= ct * max_ratio:
+        return None
+    if time_to_due < ct * danger_ratio:
+        return "danger", 30
+    if danger_ratio < _CT_RATIO_WARN_UPPER and time_to_due < ct * _CT_RATIO_WARN_UPPER:
+        return "warn_upper", 30
+    return "warn_lower", 20
+
+
+def _build_lot_adjustments(
+    release_plan_rows: list[dict],
+    delta_pct: float,
+    t0: float,
+    plan_level: str = "aggressive",
+) -> list[LotAdjustment]:
+    """mes_lot_release_plan 조회 결과 + 강도별 delta_pct → LotAdjustment 목록."""
+    multiplier = 1.0 + delta_pct / 100.0
+    max_ratio = _PLAN_MAX_RATIO.get(plan_level, _CT_RATIO_WARN_LOWER)
+    danger_ratio = _PLAN_DANGER_RATIO.get(plan_level, _CT_RATIO_DANGER)
+    adjustments: list[LotAdjustment] = []
+
+    for row in release_plan_rows:
+        original_release_time = float(row["release_time"] or 0)
+        due_date_sim = float(row["due_date_sim"] or 0)
+        if original_release_time > t0:
+            new_release_time = t0 + (original_release_time - t0) * multiplier
+        else:
+            new_release_time = original_release_time
+        time_to_due = due_date_sim - new_release_time
+
+        product_name = str(row["product_name"])
+        result = _classify_lot(time_to_due, product_name, max_ratio, danger_ratio)
+        if result is None:
+            continue
+
+        zone, priority = result
+        action_kind = "SET_SUPER_HOT" if zone == "danger" else "LOT_PRIORITY"
+
+        adjustments.append(
+            LotAdjustment(
+                lot_plan_id=int(row.get("lot_plan_id", 0)),
+                lot_type=str(row["lot_type"]),
+                product_name=product_name,
+                release_time=original_release_time,
+                whatif_release_time=round(new_release_time, 4),
+                action_kind=action_kind,
+                priority=priority,
+                time_to_due=round(time_to_due, 1),
+                zone=zone,
+            )
+        )
+
+    return adjustments
+
+
+def generate_global_candidates(
+    target_alerts: list[BottleneckAlert],
+    cause_map: dict[str, CauseReport],
+    release_plan_rows: list[dict],
+    t0: float = 0.0,
+) -> list[GlobalCompositeCandidate]:
+    """Critical TG 전체를 묶은 글로벌 복합 대응안 3개(보수/표준/강화) 생성.
+
+    Args:
+        target_alerts: severity==CRITICAL인 BottleneckAlert 목록
+        cause_map: toolgroup → CauseReport 매핑
+        release_plan_rows: mes_lot_release_plan 조회 결과
+            (source_lot_release_id, product_name, release_time, due_date_sim 필드 필요)
+        t0: 현재 snapshot_time (분). release_time 조정 기준점.
+
+    Returns:
+        GlobalCompositeCandidate 3개 리스트 (보수/표준/강화 순).
+        유효한 judgment가 없으면 빈 리스트 반환.
+    """
+    valid_alerts = [
+        a for a in target_alerts
+        if a.toolgroup in cause_map and cause_map[a.toolgroup].judgment is not None
+    ]
+    if not valid_alerts:
+        return []
+
+    target_tgs = [a.toolgroup for a in valid_alerts]
+    complexity = _detect_complexity(valid_alerts, cause_map)
+    pct_table = _COMPLEXITY_PCT[complexity]
+    hitl = complexity == "complex"
+    escalation_reason = "3가지 이상 원인 카테고리 동시 악화 — HITL 에스컬레이션 권장" if hitl else ""
+
+    candidates: list[GlobalCompositeCandidate] = []
+    for level in _PLAN_LEVELS:
+        delta_pct = min(pct_table[level], _ABSOLUTE_MAX_PCT)
+        adjustments = _build_lot_adjustments(release_plan_rows, delta_pct, t0, level)
+
+        candidates.append(
+            GlobalCompositeCandidate(
+                plan_id=level,
+                target_toolgroups=target_tgs,
+                release_interval_delta_pct=delta_pct,
+                lot_adjustments=adjustments,
+                cause_complexity=complexity,
+                hitl_escalation_recommended=hitl,
+                escalation_reason=escalation_reason,
+            )
+        )
+
+    return candidates
+
+
+# ── 레거시 헬퍼 ───────────────────────────────────────────────────────────────
 
 def _excess_ratio(feature: str, kpi_value: float) -> float:
     thr_map = {
