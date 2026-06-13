@@ -163,27 +163,29 @@ def _apply_lot_adjustments(
 
     session = get_session()
     try:
-        for adj in lot_adjustments:
-            priority = adj["priority"]
-            is_super_hot = adj["action_kind"] == "SET_SUPER_HOT"
-            session.execute(
-                text("""
-                    UPDATE mes_lot_release_plan
-                    SET priority = :priority, is_super_hot = :is_super_hot
-                    WHERE scenario_id = :sid
-                      AND lot_type = :lot_type
-                      AND product_name = :product_name
-                      AND ABS(release_time - :whatif_release_time) < 0.1
-                """),
-                {
-                    "sid": whatif_id,
-                    "lot_type": adj["lot_type"],
-                    "product_name": adj["product_name"],
-                    "priority": priority,
-                    "is_super_hot": is_super_hot,
-                    "whatif_release_time": adj["whatif_release_time"],
-                },
-            )
+        params = [
+            {
+                "sid": whatif_id,
+                "lot_type": adj["lot_type"],
+                "product_name": adj["product_name"],
+                "priority": adj["priority"],
+                "is_super_hot": adj["action_kind"] == "SET_SUPER_HOT",
+                "whatif_release_time": adj["whatif_release_time"],
+            }
+            for adj in lot_adjustments
+        ]
+        session.execute(
+            text("""
+                UPDATE mes_lot_release_plan
+                SET priority = :priority, is_super_hot = :is_super_hot
+                WHERE scenario_id = :sid
+                  AND lot_type = :lot_type
+                  AND product_name = :product_name
+                  AND release_time >= :whatif_release_time - 0.1
+                  AND release_time <= :whatif_release_time + 0.1
+            """),
+            params,
+        )
         session.commit()
     except Exception:
         session.rollback()

@@ -280,7 +280,9 @@ def _detect_complexity(
     categories = {
         cause_map[a.toolgroup].judgment.primary_category
         for a in target_alerts
-        if a.toolgroup in cause_map and cause_map[a.toolgroup].judgment is not None
+        if a.toolgroup in cause_map
+        and cause_map[a.toolgroup].judgment is not None
+        and cause_map[a.toolgroup].judgment.primary_category is not None
     }
     n = len(categories)
     if n <= 1:
@@ -308,7 +310,7 @@ def _classify_lot(
         return None
     if time_to_due < ct * danger_ratio:
         return "danger", 30
-    if time_to_due < ct * _CT_RATIO_WARN_UPPER:
+    if danger_ratio < _CT_RATIO_WARN_UPPER and time_to_due < ct * _CT_RATIO_WARN_UPPER:
         return "warn_upper", 30
     return "warn_lower", 20
 
