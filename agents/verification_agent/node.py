@@ -7,9 +7,13 @@ from __future__ import annotations
 
 from agents.logger import get_logger
 from agents.schemas.alert import BottleneckAlert, SeverityLevel
-from agents.schemas.solution import GlobalSolutionPlan, SolutionCandidate
+from agents.schemas.solution import GlobalCompositeCandidate, GlobalSolutionPlan, SolutionCandidate
 from agents.state import PipelineState
-from agents.verification_agent.action_mapper import candidate_to_action_rows, plan_to_action_rows
+from agents.verification_agent.action_mapper import (
+    candidate_to_action_rows,
+    composite_to_action_rows,
+    plan_to_action_rows,
+)
 from agents.verification_agent.confidence_scorer import compute_paired_stats
 from agents.verification_agent.kpi_comparator import compute_paired_deltas
 from agents.verification_agent.sim_executor import (
@@ -21,6 +25,97 @@ from agents.verification_agent.sim_executor import (
 _log = get_logger(__name__)
 
 _RANK_TO_LABEL = {1: "A", 2: "B", 3: "C"}
+
+
+def _verify_composite_candidates(
+    solution_candidates: list[dict],
+    alerts: list[BottleneckAlert],
+    t0: float,
+) -> list[dict]:
+    """GlobalCompositeCandidate 3개(보수/표준/강화) 각각을 30회 paired 시뮬로 검증."""
+    critical_alerts = [a for a in alerts if a.severity == SeverityLevel.CRITICAL]
+    anchor_alert = max(critical_alerts, key=lambda a: a.composite_score) if critical_alerts else None
+    if anchor_alert is None:
+        _log.warning("[Verify] CRITICAL 알림 없음 — anchor TG 없이 스킵")
+        return []
+
+    results: list[dict] = []
+
+    for cand_dict in solution_candidates:
+        try:
+            candidate = GlobalCompositeCandidate(**cand_dict)
+        except Exception as e:
+            _log.warning(f"[Verify] GlobalCompositeCandidate 파싱 실패: {e}")
+            continue
+
+        action_rows, release_multiplier = composite_to_action_rows(candidate, t0)
+        lot_adjustments = [adj.model_dump() if hasattr(adj, "model_dump") else adj
+                           for adj in candidate.lot_adjustments]
+
+        _log.info(
+            f"[Verify] 플랜 {candidate.plan_id} — "
+            f"{len(candidate.target_toolgroups)}개 TG, "
+            f"+{candidate.release_interval_delta_pct}%, "
+            f"lot_adjustments={len(lot_adjustments)}건 "
+            f"× 30 paired 시뮬 시작 (anchor={anchor_alert.toolgroup})"
+        )
+
+        try:
+            group_id, pairs, baseline_scenario_id = run_whatif_paired(
+                t0=t0,
+                horizon_min=HORIZON_MIN,
+                action_rows=action_rows,
+                release_interval_multiplier=release_multiplier,
+                label=f"COMPOSITE_{candidate.plan_id.upper()}",
+                lot_adjustments=lot_adjustments,
+            )
+        except Exception as e:
+            _log.error(f"[Verify] 플랜 {candidate.plan_id} 시뮬 실패: {e}")
+            continue
+
+        kpi_deltas = compute_paired_deltas(pairs, anchor_alert.toolgroup)
+        kpi_stats: dict[str, dict] = {}
+        for kpi_name, deltas in kpi_deltas.items():
+            if len(deltas) >= 2:
+                kpi_stats[kpi_name] = compute_paired_stats(deltas)
+
+        target_stats = kpi_stats.get("q_time_min", {})
+
+        plan_meta = {
+            "plan_id": candidate.plan_id,
+            "target_toolgroups": candidate.target_toolgroups,
+            "release_interval_delta_pct": candidate.release_interval_delta_pct,
+            "cause_complexity": candidate.cause_complexity,
+            "lot_adjustments_count": len(lot_adjustments),
+            "hitl_escalation_recommended": candidate.hitl_escalation_recommended,
+            "escalation_reason": candidate.escalation_reason,
+        }
+
+        results.append({
+            "plan_id": candidate.plan_id,
+            "target_toolgroups": candidate.target_toolgroups,
+            "snapshot_time": t0,
+            "baseline_scenario_id": baseline_scenario_id,
+            "verified_candidates": [{
+                "label": candidate.plan_id,
+                "name": {"conservative": "보수적 조정안", "standard": "표준 조정안", "aggressive": "강화 조정안"}.get(
+                    candidate.plan_id, candidate.plan_id
+                ),
+                "target_kpi": "q_time_min",
+                "action_rows": action_rows,
+                "whatif_scenario_group_id": group_id,
+                "baseline_scenario_id": baseline_scenario_id,
+                "paired_n": len(pairs),
+                "kpi_stats": kpi_stats,
+                "target_kpi_stats": target_stats,
+                "verdict": target_stats.get("verdict", "unknown"),
+                "paired_t_p": target_stats.get("paired_t_p"),
+                "plan_meta": plan_meta,
+            }],
+        })
+
+    _log.info(f"[Verify] GlobalCompositeCandidate 검증 완료 — {len(results)}개 플랜")
+    return results
 
 
 def _verify_candidates(
@@ -199,7 +294,14 @@ def verify_solutions(state: PipelineState) -> PipelineState:
         _log.error("[Verify] baseline 시나리오 없음 — 전체 스킵")
         return {**state, "verification_results": []}
 
-    if "plan_id" in solution_candidates[0]:
+    first = solution_candidates[0]
+    if first.get("plan_id") in ("conservative", "standard", "aggressive"):
+        # 신규: GlobalCompositeCandidate 포맷
+        return {**state, "verification_results": _verify_composite_candidates(
+            solution_candidates, alerts, t0,
+        )}
+    if "plan_id" in first:
+        # 레거시: GlobalSolutionPlan (plan_id="A"/"B") 포맷
         return {**state, "verification_results": _verify_global_plans(
             solution_candidates, alerts, t0,
         )}

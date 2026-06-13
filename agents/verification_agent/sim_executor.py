@@ -153,12 +153,56 @@ def _create_whatif_scenario(
         session.close()
 
 
+def _apply_lot_adjustments(
+    whatif_id: str,
+    lot_adjustments: list[dict],
+) -> None:
+    """복사된 mes_lot_release_plan에 lot_adjustments 기반 priority/is_super_hot 업데이트."""
+    if not lot_adjustments:
+        return
+
+    session = get_session()
+    try:
+        for adj in lot_adjustments:
+            priority = adj["priority"]
+            is_super_hot = adj["action_kind"] == "SET_SUPER_HOT"
+            session.execute(
+                text("""
+                    UPDATE mes_lot_release_plan
+                    SET priority = :priority, is_super_hot = :is_super_hot
+                    WHERE scenario_id = :sid
+                      AND lot_type = :lot_type
+                      AND product_name = :product_name
+                      AND ABS(release_time - :whatif_release_time) < 0.1
+                """),
+                {
+                    "sid": whatif_id,
+                    "lot_type": adj["lot_type"],
+                    "product_name": adj["product_name"],
+                    "priority": priority,
+                    "is_super_hot": is_super_hot,
+                    "whatif_release_time": adj["whatif_release_time"],
+                },
+            )
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 def _copy_snapshots(
     baseline_id: str,
     whatif_id: str,
     release_interval_multiplier: float,
+    t0: float,
+    lot_adjustments: list[dict] | None = None,
 ) -> None:
-    """baseline 스냅샷 데이터를 WHATIF scenario_id로 복사."""
+    """baseline 스냅샷 데이터를 WHATIF scenario_id로 복사.
+
+    lot_adjustments가 있으면 복사 후 mes_lot_release_plan priority/is_super_hot 업데이트.
+    """
     session = get_session()
     try:
         session.execute(
@@ -213,15 +257,16 @@ def _copy_snapshots(
                      release_time, lots_count, release_interval, lot_name_prefix,
                      lot_type, priority, due_date_sim, wafers_per_lot, is_super_hot)
                 SELECT :wid, source_lot_release_id, product_name, route_name,
-                       release_time, lots_count,
-                       CASE WHEN release_interval IS NOT NULL
-                            THEN release_interval * :mult ELSE NULL END,
+                       CASE WHEN release_time > :t0
+                            THEN :t0 + (release_time - :t0) * :mult
+                            ELSE release_time END,
+                       lots_count, release_interval,
                        lot_name_prefix, lot_type, priority, due_date_sim,
                        wafers_per_lot, is_super_hot
                 FROM mes_lot_release_plan
                 WHERE scenario_id = :bid
             """),
-            {"wid": whatif_id, "bid": baseline_id, "mult": mult},
+            {"wid": whatif_id, "bid": baseline_id, "mult": mult, "t0": t0},
         )
 
         session.commit()
@@ -230,6 +275,9 @@ def _copy_snapshots(
         raise
     finally:
         session.close()
+
+    if lot_adjustments:
+        _apply_lot_adjustments(whatif_id, lot_adjustments)
 
 
 def _query_queued_lots(scenario_id: str, tool_group: str) -> list[dict]:
@@ -395,12 +443,18 @@ def run_whatif_paired(
     release_interval_multiplier: float,
     label: str,
     lot_action_config: dict | None = None,
+    lot_adjustments: list[dict] | None = None,
 ) -> tuple[str, list[dict], str]:
     """
     WHATIF 30회 paired 실행 (seed=baseline 런과 동일).
 
     각 seed별로 WHATIF 시나리오를 생성하고 시뮬을 실행.
     paired t-test용 30쌍 pairs 반환.
+
+    Args:
+        lot_adjustments: GlobalCompositeCandidate.lot_adjustments (dict 리스트).
+            있으면 _copy_snapshots() 후 mes_lot_release_plan priority/is_super_hot 업데이트.
+        lot_action_config: 레거시 — mes_wip_snapshot QUEUE lot 기반 액션 생성용.
 
     Returns:
         group_id:    이 검증 세션의 그룹 ID (prefix)
@@ -438,7 +492,7 @@ def run_whatif_paired(
 
         try:
             _create_whatif_scenario(whatif_id, t0, horizon_min, baseline_id)
-            _copy_snapshots(baseline_id, whatif_id, release_interval_multiplier)
+            _copy_snapshots(baseline_id, whatif_id, release_interval_multiplier, t0, lot_adjustments)
 
             all_actions = list(action_rows)
             if lot_action_config:

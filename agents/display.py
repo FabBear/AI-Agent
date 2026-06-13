@@ -142,12 +142,72 @@ def print_cause_reports(reports: list[CauseReport]) -> None:
         print("─" * 70)
 
 
+def _print_composite_solutions(solutions: list[dict]) -> None:
+    """GlobalCompositeCandidate 포맷 출력."""
+    tgs = solutions[0].get("target_toolgroups", [])
+    complexity = solutions[0].get("cause_complexity", "-")
+    hitl = any(s.get("hitl_escalation_recommended") for s in solutions)
+    print(f"\n▶ 글로벌 복합 대응안  ({len(solutions)}개 강도)")
+    print(f"  대상 TG     : {', '.join(tgs)}")
+    print(f"  원인 복잡도 : {complexity}")
+    if hitl:
+        reason = next((s.get("escalation_reason", "") for s in solutions if s.get("hitl_escalation_recommended")), "")
+        print(f"  ⚠ HITL 에스컬레이션 권고: {reason}")
+    print()
+
+    _level_name = {"conservative": "보수적 조정안", "standard": "표준 조정안", "aggressive": "강화 조정안"}
+    for s in solutions:
+        plan_id = s.get("plan_id", "-")
+        delta_pct = s.get("release_interval_delta_pct", 0)
+        adjustments = s.get("lot_adjustments", [])
+        danger = [a for a in adjustments if a.get("zone") == "danger"]
+        warn_upper = [a for a in adjustments if a.get("zone") == "warn_upper"]
+        warn_lower = [a for a in adjustments if a.get("zone") == "warn_lower"]
+
+        print(f"  [{plan_id.upper()}] {_level_name.get(plan_id, plan_id)}")
+        print(f"      Release Interval 조정 : {delta_pct:+.1f}%")
+        if adjustments:
+            print(f"      lot 조정 ({len(adjustments)}건)")
+            for zone_key, zone_label, action_label in [
+                ("danger",     "위험구간", "→ SuperHotLot (priority 30)"),
+                ("warn_upper", "경고상단", "→ priority 30           "),
+                ("warn_lower", "경고하단", "→ priority 20           "),
+            ]:
+                group = [a for a in adjustments if a.get("zone") == zone_key]
+                if not group:
+                    continue
+                print(f"        [{zone_label}] {action_label}  ({len(group)}건)")
+                type_counts: dict[str, int] = {}
+                for a in group:
+                    t = a.get("lot_type", "-")
+                    type_counts[t] = type_counts.get(t, 0) + 1
+                type_seq: dict[str, int] = {}
+                for a in group:
+                    raw   = a.get("lot_type", "-")
+                    type_seq[raw] = type_seq.get(raw, 0) + 1
+                    lot_id = f"{raw}_{type_seq[raw]}" if type_counts[raw] > 1 else raw
+                    prod   = a.get("product_name", "-")
+                    rel    = a.get("release_time", 0)
+                    t2d    = a.get("time_to_due", 0)
+                    print(f"          {lot_id:<26} {prod:<12}  rel={rel:.0f}  t2due={t2d:.0f}분")
+        else:
+            print(f"      lot 조정 : 없음 (납기 위험 없음)")
+    print("─" * 70)
+
+
 def print_solutions(solutions: list[dict]) -> None:
     if not solutions:
         return
     print("=" * 70)
     print("  대응안 생성 결과")
     print("=" * 70)
+
+    # 신규: GlobalCompositeCandidate 포맷
+    if solutions[0].get("plan_id") in ("conservative", "standard", "aggressive"):
+        _print_composite_solutions(solutions)
+        return
+
+    # 레거시: per-TG 포맷
     for entry in solutions:
         tg = entry.get("toolgroup", "-")
         candidates = entry.get("candidates", [])
