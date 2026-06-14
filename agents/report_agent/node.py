@@ -17,7 +17,7 @@ from agents.report_agent.adapter import (
     sanitize_for_json,
 )
 from agents.report_agent.builder import build_report_v2
-from agents.report_agent.writer import narrate, render_sections
+from agents.report_agent.writer import narrate_with_reflection, render_sections
 
 _ROOT = Path(__file__).parent.parent.parent
 REPORTS_DIR = _ROOT / "report_agent_out"
@@ -390,7 +390,8 @@ def report_summary(state: "PipelineState") -> dict:
             _log.warning(f"[Report] {item.get('toolgroup', '?')} report_v2 없음 — 스킵")
             continue
         try:
-            narration = narrate(rv2)
+            historical = state.get("historical_context")
+            narration = narrate_with_reflection(rv2, historical=historical)
             sections = render_sections(rv2, narration)
             item["section_summary"]   = sections["summary"]
             item["section_diffusion"] = sections["diffusion"]

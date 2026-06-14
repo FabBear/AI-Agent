@@ -21,3 +21,4 @@ class PipelineState(TypedDict):
     compare_results: list[dict]       # 대응안 비교분석 결과 (Agent 5 출력)
     report_draft: list[dict]          # Agent 6 중간: 툴그룹별 섹션 누적
     report_results: list[dict]        # 최종보고서 생성 결과 (Agent 6 출력)
+    historical_context: dict | None   # Level 3: DB 조회 과거 이력 (반복 횟수·조치 효과)

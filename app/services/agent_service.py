@@ -188,6 +188,8 @@ async def run_post_hitl(
             decided_at,
             comment,
         )
+        tg_code = str((pending.get("compare_formatted") or [{}])[0].get("toolgroup", ""))
+        state["historical_context"] = await _fetch_historical_context(pool, tg_code)
         result = await asyncio.to_thread(build_phase2_pipeline().invoke, state)
         report_results = result.get("report_results", [])
         tg_code = str((pending.get("compare_formatted") or [{}])[0].get("toolgroup", ""))
@@ -322,6 +324,7 @@ def _initial_state(
         "compare_results": [],
         "report_draft": [],
         "report_results": [],
+        "historical_context": None,
     }
 
 
@@ -452,7 +455,26 @@ def _reconstruct_phase2_state(
         "compare_results": compare_results,
         "report_draft": [],
         "report_results": [],
+        "historical_context": None,
     }
+
+
+async def _fetch_historical_context(pool: asyncpg.Pool, tg_code: str) -> dict | None:
+    """report_agent Level 3: DB에서 반복 이력·과거 조치 효과를 조회한다.
+    실패 시 None 반환 — 보고서 생성은 historical 없이 계속 진행된다."""
+    if not tg_code:
+        return None
+    try:
+        from agents.report_agent.tools import (
+            fetch_past_action_effectiveness,
+            fetch_repeat_count,
+        )
+        repeat = await fetch_repeat_count(pool, tg_code)
+        effectiveness = await fetch_past_action_effectiveness(pool, tg_code)
+        return {"repeat_count": repeat, "past_effectiveness": effectiveness}
+    except Exception as exc:
+        logger.warning("historical_context 조회 실패(무시): tg=%s err=%s", tg_code, exc)
+        return None
 
 
 def _report_summary(report_results: list[dict]) -> str:

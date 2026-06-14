@@ -93,7 +93,12 @@ class CompareRecommendation(BaseModel):
     )
     why_not_others: dict[str, str] = Field(
         default_factory=dict,
-        description="{label: 한 줄 이유}. 추천 외 모든 후보에 대해 score/p값/KPI 수치 인용.",
+        description=(
+            "{label: 한 줄 이유}. 추천 외 후보를 선택하지 않은 공정 관점의 이유. "
+            "composite_score·effort 숫자값·paired_n 같은 시스템 내부 코드를 그대로 쓰지 말고 "
+            "해석된 의미로 표현할 것. "
+            "예: '시뮬레이션 효과가 동일하게 관측되지 않음', '운영 부담이 더 높음'."
+        ),
     )
     caveats: list[str] = Field(
         default_factory=list,
@@ -156,6 +161,10 @@ _SYS = """[역할]
 11. caveats에 시뮬레이션 horizon 한계 명시. data_quality 경고가 있을 경우 그 사실도 명시.
 12. 문체: "~입니다"체.
 13. 모든 KPI 수치는 시뮬레이션 예측값임을 명시.
+14. why_not_others와 caveats에서 시스템 내부 코드(SIM_KPI_IDENTICAL, paired_n, composite_score 등)를
+    그대로 노출하지 않는다. 해석된 의미로 표현한다.
+    예(금지): "SIM_KPI_IDENTICAL 경고가 있어 paired_n=30으로 mean_delta=0"
+    예(허용): "시뮬레이션이 조치 효과를 감지하지 못한 것으로 의심됨 — 파라미터 범위 재검토 필요"
 
 [no_meaningful_effect 처리]
 시뮬 효과 미관측 시:
