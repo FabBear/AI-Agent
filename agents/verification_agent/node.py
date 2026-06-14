@@ -51,14 +51,20 @@ def _verify_composite_candidates(
     if cause_reports:
         for cr in cause_reports:
             if cr.toolgroup == anchor_alert.toolgroup and cr.sim_forecast:
+                horizon = cr.sim_forecast.t_future - cr.sim_forecast.t0
+                if abs(horizon - DISPLAY_HORIZON_MIN) > 1.0:
+                    _log.warning(
+                        f"[Verify 1200] sim_forecast horizon {horizon:.0f}min ≠ "
+                        f"DISPLAY_HORIZON_MIN {DISPLAY_HORIZON_MIN:.0f}min — baseline 스킵"
+                    )
+                    break
                 baseline_1200 = {
                     kpi: comp.future
                     for kpi, comp in cr.sim_forecast.kpi_delta.items()
                 }
                 _log.info(
                     f"[Verify 1200] baseline KPI from cause_reports "
-                    f"(t+{(cr.sim_forecast.t_future - cr.sim_forecast.t0):.0f}min): "
-                    f"{list(baseline_1200.keys())}"
+                    f"(t+{horizon:.0f}min): {list(baseline_1200.keys())}"
                 )
                 break
 
@@ -106,37 +112,38 @@ def _verify_composite_candidates(
 
         # ── 1200min 단일 whatif (KPI 효과 표시용) ─────────────────────────────
         kpi_effect_1200: dict[str, dict] = {}
-        try:
-            whatif_csv = run_whatif_single_display(
-                t0=t0,
-                action_rows=action_rows,
-                release_interval_multiplier=release_multiplier,
-                label=f"COMPOSITE_{candidate.plan_id.upper()}",
-                lot_adjustments=lot_adjustments,
-            )
-            if whatif_csv and baseline_1200:
-                from agents.sim_runner.forecaster import load_forward_kpis
-                whatif_kpis = load_forward_kpis(whatif_csv)
-                wkpi = whatif_kpis.get(anchor_alert.toolgroup)
-                if wkpi:
-                    for kpi_field in ("wip", "wait_ratio", "available_tool_ratio", "utilization_avg"):
-                        bv = baseline_1200.get(kpi_field)
-                        wv = getattr(wkpi, kpi_field, None)
-                        if bv is not None and wv is not None:
-                            delta = wv - bv
-                            pct = (delta / bv * 100) if bv != 0 else 0.0
-                            kpi_effect_1200[kpi_field] = {
-                                "baseline": round(bv, 3),
-                                "whatif": round(wv, 3),
-                                "delta": round(delta, 3),
-                                "pct_change": round(pct, 1),
-                            }
-                    _log.info(
-                        f"[Verify 1200] {candidate.plan_id}: "
-                        f"{len(kpi_effect_1200)}개 KPI 효과 계산 완료"
-                    )
-        except Exception as e:
-            _log.warning(f"[Verify 1200] {candidate.plan_id} 1200min whatif 스킵: {e}")
+        if baseline_1200:
+            try:
+                whatif_csv = run_whatif_single_display(
+                    t0=t0,
+                    action_rows=action_rows,
+                    release_interval_multiplier=release_multiplier,
+                    label=f"COMPOSITE_{candidate.plan_id.upper()}",
+                    lot_adjustments=lot_adjustments,
+                )
+                if whatif_csv:
+                    from agents.sim_runner.forecaster import load_forward_kpis
+                    whatif_kpis = load_forward_kpis(whatif_csv)
+                    wkpi = whatif_kpis.get(anchor_alert.toolgroup)
+                    if wkpi:
+                        for kpi_field in ("wip", "wait_ratio", "available_tool_ratio", "utilization_avg"):
+                            bv = baseline_1200.get(kpi_field)
+                            wv = getattr(wkpi, kpi_field, None)
+                            if bv is not None and wv is not None:
+                                delta = wv - bv
+                                pct = (delta / bv * 100) if bv != 0 else 0.0
+                                kpi_effect_1200[kpi_field] = {
+                                    "baseline": round(bv, 3),
+                                    "whatif": round(wv, 3),
+                                    "delta": round(delta, 3),
+                                    "pct_change": round(pct, 1),
+                                }
+                        _log.info(
+                            f"[Verify 1200] {candidate.plan_id}: "
+                            f"{len(kpi_effect_1200)}개 KPI 효과 계산 완료"
+                        )
+            except Exception as e:
+                _log.warning(f"[Verify 1200] {candidate.plan_id} 1200min whatif 스킵: {e}")
 
         plan_meta = {
             "plan_id": candidate.plan_id,
