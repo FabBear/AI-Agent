@@ -12,6 +12,7 @@ class ActionPlanRepository:
         async with self._pool.acquire() as connection:
             async with connection.transaction():
                 for sequence, candidate in enumerate(candidates[:5], start=1):
+                    kpi = candidate.get("kpi_stats") or {}
                     await connection.execute(
                         """
                         INSERT INTO td_action_plan (
@@ -20,14 +21,26 @@ class ActionPlanRepository:
                             plan_type,
                             plan_title,
                             plan_detail,
-                            simulation_basis
+                            simulation_basis,
+                            est_util_delta,
+                            est_q_time_delta,
+                            est_wip_delta,
+                            est_wait_ratio_delta,
+                            sim_paired_n,
+                            sim_paired_p_value
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                         ON CONFLICT (case_id, plan_seq) DO UPDATE SET
                             plan_type = EXCLUDED.plan_type,
                             plan_title = EXCLUDED.plan_title,
                             plan_detail = EXCLUDED.plan_detail,
-                            simulation_basis = EXCLUDED.simulation_basis
+                            simulation_basis = EXCLUDED.simulation_basis,
+                            est_util_delta = EXCLUDED.est_util_delta,
+                            est_q_time_delta = EXCLUDED.est_q_time_delta,
+                            est_wip_delta = EXCLUDED.est_wip_delta,
+                            est_wait_ratio_delta = EXCLUDED.est_wait_ratio_delta,
+                            sim_paired_n = EXCLUDED.sim_paired_n,
+                            sim_paired_p_value = EXCLUDED.sim_paired_p_value
                         """,
                         case_id,
                         sequence,
@@ -35,6 +48,12 @@ class ActionPlanRepository:
                         self._plan_title(candidate, sequence),
                         self._plan_detail(candidate),
                         json.dumps(candidate, ensure_ascii=False),
+                        kpi.get("est_util_delta"),
+                        kpi.get("est_q_time_delta"),
+                        kpi.get("est_wip_delta"),
+                        kpi.get("est_wait_ratio_delta"),
+                        kpi.get("sim_paired_n"),
+                        kpi.get("sim_paired_p_value"),
                     )
 
     async def find_by_id(self, case_id: UUID, plan_id: UUID) -> dict | None:

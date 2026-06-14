@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.repositories.action_plan_repository import ActionPlanRepository
 from app.repositories.agent_step_repository import AgentStepRepository
 from app.repositories.cause_analysis_repository import CauseAnalysisRepository
+from app.repositories.ml_model_repository import MlModelRepository
 from app.repositories.response_report_repository import ResponseReportRepository
 from app.services.spring_client import SpringClient, get_spring_client
 
@@ -80,6 +81,11 @@ async def run_pipeline(
     await step_repo.init_steps(case_id)
     await step_repo.mark_in_progress(case_id, current_step)
 
+    active_model = await MlModelRepository(pool).find_active()
+    model_version_id: UUID | None = (
+        UUID(str(active_model["model_version_id"])) if active_model else None
+    )
+
     try:
         kpi_list = await asyncio.to_thread(
             load_kpi_snapshot,
@@ -122,6 +128,7 @@ async def run_pipeline(
                     plan_repo,
                     spring_client,
                     tg_code,
+                    model_version_id,
                 )
 
         await _store_hitl_case_mapping(case_id, final_state.get("hitl_token"))
@@ -210,12 +217,13 @@ async def _handle_pipeline_event(
     plan_repo: ActionPlanRepository,
     spring_client: SpringClient,
     tg_code: str,
+    model_version_id: UUID | None = None,
 ) -> str:
     if node_name == "detect":
         return "cascade"
     if node_name == "cascade":
         summary = _extract_summary("cascade", state)
-        await _complete_step(case_id, "cascade", summary, step_repo, spring_client)
+        await _complete_step(case_id, "cascade", summary, step_repo, spring_client, model_version_id)
         if not state.get("alerts"):
             for step in ("cause", "solution", "compare", "hitl", "report"):
                 await step_repo.mark_done(case_id, step, "병목 없음")
@@ -228,18 +236,35 @@ async def _handle_pipeline_event(
         if report is None and reports:
             report = reports[0]
         if report is not None:
-            await cause_repo.upsert(case_id, report)
+            alerts = state.get("alerts", [])
+            alert = next((a for a in alerts if a.toolgroup == tg_code), None)
+            affected_tgs = (
+                alert.impact.affected_tgs
+                if alert and getattr(alert, "impact", None)
+                else None
+            )
+            await cause_repo.upsert(case_id, report, affected_tgs=affected_tgs)
         summary = _extract_summary("cause", state)
-        await _complete_step(case_id, "cause", summary, step_repo, spring_client)
+        await _complete_step(case_id, "cause", summary, step_repo, spring_client, model_version_id)
         await step_repo.mark_in_progress(case_id, "solution")
         return "solution"
     if node_name == "solution":
-        await plan_repo.bulk_insert(case_id, state.get("solution_candidates", []))
         summary = _extract_summary("solution", state)
         await _complete_step(case_id, "solution", summary, step_repo, spring_client)
         await step_repo.mark_in_progress(case_id, "compare")
         return "compare"
     if node_name == "compare_rank":
+        candidates = list(state.get("solution_candidates", []))
+        compare_inputs = state.get("compare_inputs", [])
+        if compare_inputs:
+            action_cands = [
+                c for c in compare_inputs[0].get("action_candidates", [])
+                if not c.get("is_baseline")
+            ]
+            for i, action in enumerate(action_cands):
+                if i < len(candidates):
+                    candidates[i] = {**candidates[i], "kpi_stats": action.get("kpi_stats")}
+        await plan_repo.bulk_insert(case_id, candidates)
         return "compare"
     if node_name == "compare_llm":
         summary = _extract_summary("compare", state)
@@ -259,8 +284,9 @@ async def _complete_step(
     summary: str | None,
     step_repo: AgentStepRepository,
     spring_client: SpringClient,
+    model_version_id: UUID | None = None,
 ) -> None:
-    await step_repo.mark_done(case_id, node_name, summary)
+    await step_repo.mark_done(case_id, node_name, summary, model_version_id=model_version_id)
     asyncio.create_task(spring_client.notify_agent_step(case_id, node_name, summary))
 
 
@@ -441,7 +467,7 @@ async def _index_report_to_qdrant(
     try:
         from app.services.qdrant_service import QdrantService
 
-        report_text = ResponseReportRepository._report_text(report_result)
+        report_text = ResponseReportRepository._rendered_markdown(report_result)
         meta = report_result.get("meta") or {}
         summary = str(meta.get("summary") or report_text[:500])
         qdrant = QdrantService(get_settings())
