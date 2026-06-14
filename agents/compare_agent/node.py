@@ -948,7 +948,7 @@ def _hitl_terminal(compare_formatted: list[dict], _log) -> dict:
                 "approved_at": now,
                 "comment": comment,
                 "rejection_reason": None,
-                "selected_label": raw,
+                "selected_label": raw.lower(),
             }
 
         compare_results.append(_build_compare_result(cf, approval_info))
