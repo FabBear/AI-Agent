@@ -34,6 +34,6 @@ class DriftAlertRepository:
             trigger_type,
             psi_score,
             f1_at_detection,
-            json.dumps(detail) if detail is not None else None,
+            json.dumps(detail, default=str) if detail is not None else None,
         )
         return row["drift_id"]
