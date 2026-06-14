@@ -24,6 +24,7 @@ def get_trend_top(
     window: dict[float, list[ToolGroupKPI]],
     toolgroup: str,
     top_n: int = 3,
+    priority_features: list[str] | None = None,
 ) -> list[TrendInsight]:
     times = sorted(window.keys())
     if len(times) < 2:
@@ -68,9 +69,15 @@ def get_trend_top(
             )
         )
 
-    def _deterioration(ins: TrendInsight) -> float:
-        raw = ins.slope_per_hour
-        return -raw if ins.feature in _INVERSE_KPI else raw
+    priority_set = list(priority_features or [])
 
-    insights.sort(key=_deterioration, reverse=True)
+    def _sort_key(ins: TrendInsight) -> tuple:
+        priority_rank = next(
+            (i for i, f in enumerate(priority_set) if f == ins.feature), len(priority_set)
+        )
+        raw = ins.slope_per_hour
+        deterioration = -raw if ins.feature in _INVERSE_KPI else raw
+        return (priority_rank, -deterioration)
+
+    insights.sort(key=_sort_key)
     return insights[:top_n]

@@ -17,9 +17,11 @@ from agents.verification_agent.action_mapper import (
 from agents.verification_agent.confidence_scorer import compute_paired_stats
 from agents.verification_agent.kpi_comparator import compute_paired_deltas
 from agents.verification_agent.sim_executor import (
+    DISPLAY_HORIZON_MIN,
     HORIZON_MIN,
     find_baseline_scenario,
     run_whatif_paired,
+    run_whatif_single_display,
 )
 
 _log = get_logger(__name__)
@@ -31,13 +33,34 @@ def _verify_composite_candidates(
     solution_candidates: list[dict],
     alerts: list[BottleneckAlert],
     t0: float,
+    cause_reports: list | None = None,
 ) -> list[dict]:
-    """GlobalCompositeCandidate 3개(보수/표준/강화) 각각을 30회 paired 시뮬로 검증."""
+    """GlobalCompositeCandidate 3개(보수/표준/강화) 각각을 30회 paired 시뮬로 검증.
+
+    통계 검정: HORIZON_MIN(120min) 30-run paired t-test.
+    KPI 효과 표시: DISPLAY_HORIZON_MIN(1200min) 단일 whatif vs cause_reports baseline.
+    """
     critical_alerts = [a for a in alerts if a.severity == SeverityLevel.CRITICAL]
     anchor_alert = max(critical_alerts, key=lambda a: a.composite_score) if critical_alerts else None
     if anchor_alert is None:
         _log.warning("[Verify] CRITICAL 알림 없음 — anchor TG 없이 스킵")
         return []
+
+    # baseline 1200min KPI: cause_reports의 sim_forecast에서 추출 (already computed)
+    baseline_1200: dict[str, float] = {}
+    if cause_reports:
+        for cr in cause_reports:
+            if cr.toolgroup == anchor_alert.toolgroup and cr.sim_forecast:
+                baseline_1200 = {
+                    kpi: comp.future
+                    for kpi, comp in cr.sim_forecast.kpi_delta.items()
+                }
+                _log.info(
+                    f"[Verify 1200] baseline KPI from cause_reports "
+                    f"(t+{(cr.sim_forecast.t_future - cr.sim_forecast.t0):.0f}min): "
+                    f"{list(baseline_1200.keys())}"
+                )
+                break
 
     results: list[dict] = []
 
@@ -81,6 +104,40 @@ def _verify_composite_candidates(
 
         target_stats = kpi_stats.get("q_time_min", {})
 
+        # ── 1200min 단일 whatif (KPI 효과 표시용) ─────────────────────────────
+        kpi_effect_1200: dict[str, dict] = {}
+        try:
+            whatif_csv = run_whatif_single_display(
+                t0=t0,
+                action_rows=action_rows,
+                release_interval_multiplier=release_multiplier,
+                label=f"COMPOSITE_{candidate.plan_id.upper()}",
+                lot_adjustments=lot_adjustments,
+            )
+            if whatif_csv and baseline_1200:
+                from agents.sim_runner.forecaster import load_forward_kpis
+                whatif_kpis = load_forward_kpis(whatif_csv)
+                wkpi = whatif_kpis.get(anchor_alert.toolgroup)
+                if wkpi:
+                    for kpi_field in ("wip", "wait_ratio", "available_tool_ratio", "utilization_avg"):
+                        bv = baseline_1200.get(kpi_field)
+                        wv = getattr(wkpi, kpi_field, None)
+                        if bv is not None and wv is not None:
+                            delta = wv - bv
+                            pct = (delta / bv * 100) if bv != 0 else 0.0
+                            kpi_effect_1200[kpi_field] = {
+                                "baseline": round(bv, 3),
+                                "whatif": round(wv, 3),
+                                "delta": round(delta, 3),
+                                "pct_change": round(pct, 1),
+                            }
+                    _log.info(
+                        f"[Verify 1200] {candidate.plan_id}: "
+                        f"{len(kpi_effect_1200)}개 KPI 효과 계산 완료"
+                    )
+        except Exception as e:
+            _log.warning(f"[Verify 1200] {candidate.plan_id} 1200min whatif 스킵: {e}")
+
         plan_meta = {
             "plan_id": candidate.plan_id,
             "target_toolgroups": candidate.target_toolgroups,
@@ -93,9 +150,11 @@ def _verify_composite_candidates(
 
         results.append({
             "plan_id": candidate.plan_id,
+            "anchor_tg": anchor_alert.toolgroup,
             "target_toolgroups": candidate.target_toolgroups,
             "snapshot_time": t0,
             "baseline_scenario_id": baseline_scenario_id,
+            "kpi_effect_1200": kpi_effect_1200,
             "verified_candidates": [{
                 "label": candidate.plan_id,
                 "name": {"conservative": "보수적 조정안", "standard": "표준 조정안", "aggressive": "강화 조정안"}.get(
@@ -299,6 +358,7 @@ def verify_solutions(state: PipelineState) -> PipelineState:
         # 신규: GlobalCompositeCandidate 포맷
         return {**state, "verification_results": _verify_composite_candidates(
             solution_candidates, alerts, t0,
+            cause_reports=state.get("cause_reports", []),
         )}
     if "plan_id" in first:
         # 레거시: GlobalSolutionPlan (plan_id="A"/"B") 포맷
