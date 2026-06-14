@@ -65,6 +65,7 @@ class AgentStepRepository:
         output_summary: str | None = None,
         llm_model_name: str | None = None,
         token_count: int | None = None,
+        model_version_id: UUID | None = None,
     ) -> None:
         step_name = self._step_name(node_name)
         await self._pool.execute(
@@ -76,6 +77,7 @@ class AgentStepRepository:
                 output_summary = $3,
                 llm_model_name = COALESCE($4, llm_model_name),
                 token_count = COALESCE($5, token_count),
+                model_version_id = COALESCE($6, model_version_id),
                 error_msg = NULL,
                 updated_at = NOW()
             WHERE case_id = $1 AND step_name = $2 AND attempt_no = 1
@@ -85,6 +87,7 @@ class AgentStepRepository:
             output_summary,
             llm_model_name,
             token_count,
+            model_version_id,
         )
 
     async def mark_failed(self, case_id: UUID, node_name: str, error_msg: str) -> None:

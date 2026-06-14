@@ -11,26 +11,30 @@ class ResponseReportRepository:
         self._pool = pool
 
     async def insert(self, case_id: UUID, report_result: dict) -> None:
-        report_html = self._report_text(report_result)
-        meta = report_result.get("meta") or {}
-        summary = str(meta.get("summary") or report_html[:500])
+        rendered_markdown = self._rendered_markdown(report_result)
+        report_json_obj = self._report_json(report_result)
+        root_cause_text = self._root_cause_text(report_json_obj)
+        action_comparison_text = self._action_comparison_text(report_json_obj)
+        summary = str((report_json_obj or {}).get("summary") or rendered_markdown[:500])
         await self._pool.execute(
             """
             INSERT INTO td_response_report (
                 case_id,
-                report_html,
+                rendered_markdown,
+                report_json,
+                report_schema_version,
                 summary,
-                timeline_json,
                 root_cause_text,
                 action_comparison_text,
                 pdf_path,
                 generated_at
             )
-            VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
+            VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (case_id) DO UPDATE SET
-                report_html = EXCLUDED.report_html,
+                rendered_markdown = EXCLUDED.rendered_markdown,
+                report_json = EXCLUDED.report_json,
+                report_schema_version = EXCLUDED.report_schema_version,
                 summary = EXCLUDED.summary,
-                timeline_json = EXCLUDED.timeline_json,
                 root_cause_text = EXCLUDED.root_cause_text,
                 action_comparison_text = EXCLUDED.action_comparison_text,
                 pdf_path = EXCLUDED.pdf_path,
@@ -43,11 +47,12 @@ class ResponseReportRepository:
                 updated_at = NOW()
             """,
             case_id,
-            report_html,
+            rendered_markdown,
+            json.dumps(report_json_obj, ensure_ascii=False) if report_json_obj is not None else None,
+            "report/1.0",
             summary,
-            json.dumps(report_result, ensure_ascii=False),
-            report_result.get("root_cause_text"),
-            report_result.get("action_comparison_text"),
+            root_cause_text,
+            action_comparison_text,
             report_result.get("pdf_path"),
             datetime.now(UTC),
         )
@@ -67,11 +72,39 @@ class ResponseReportRepository:
         )
 
     @staticmethod
-    def _report_text(report_result: dict) -> str:
+    def _rendered_markdown(report_result: dict) -> str:
         direct = report_result.get("final_report") or report_result.get("full_markdown")
         if direct:
             return str(direct)
         output_path = report_result.get("output_path")
         if output_path and Path(output_path).is_file():
             return Path(output_path).read_text(encoding="utf-8")
-        return json.dumps(report_result, ensure_ascii=False)
+        return ""
+
+    @staticmethod
+    def _report_json(report_result: dict) -> dict | None:
+        json_output_path = report_result.get("json_output_path")
+        if json_output_path and Path(json_output_path).is_file():
+            try:
+                return json.loads(Path(json_output_path).read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return report_result.get("report_json")
+
+    @staticmethod
+    def _root_cause_text(report_json: dict | None) -> str | None:
+        if not report_json:
+            return None
+        cause = report_json.get("cause") or {}
+        return cause.get("summary")
+
+    @staticmethod
+    def _action_comparison_text(report_json: dict | None) -> str | None:
+        if not report_json:
+            return None
+        recommendation = (report_json.get("actions") or {}).get("recommendation") or {}
+        headline = recommendation.get("headline") or ""
+        primary_reason = recommendation.get("primary_reason") or ""
+        if not headline and not primary_reason:
+            return None
+        return f"{headline}: {primary_reason}" if headline and primary_reason else headline or primary_reason

@@ -14,35 +14,48 @@ class CauseAnalysisRepository:
         self,
         case_id: UUID,
         report: CauseReport,
+        affected_tgs: list[str] | None = None,
         model_accuracy: float | None = None,
         model_f1: float | None = None,
     ) -> None:
-        affected_ids = await self._find_tg_ids(report.upstream_suspects)
+        affected_ids = await self._find_tg_ids(affected_tgs or [])
         shap_features = [
             {
                 "feature": feature.feature,
-                "importance": abs(feature.shap_value),
+                "importance": feature.shap_value,
                 "rank": index,
             }
             for index, feature in enumerate(report.shap_top, start=1)
         ]
-        cause_type = report.shap_top[0].feature if report.shap_top else None
+        cause_type = report.judgment.primary_category if report.judgment else None
+        primary_cause_feature = report.judgment.primary_cause if report.judgment else None
+        cause_judgment_json = json.dumps(report.judgment.model_dump()) if report.judgment else None
+        consensus_json = json.dumps(report.consensus.model_dump()) if report.consensus else None
+        trend_json = json.dumps([t.model_dump() for t in report.trend_top]) if report.trend_top else None
         await self._pool.execute(
             """
             INSERT INTO td_cause_analysis (
                 case_id,
                 shap_features,
                 bottleneck_cause_type,
+                primary_cause_feature,
+                cause_judgment_json,
+                consensus_json,
+                trend_json,
                 diffusion_affected_tg_ids,
                 rag_referenced_case_ids,
                 model_accuracy,
                 model_f1,
                 feature_count
             )
-            VALUES ($1, $2::jsonb, $3, $4::jsonb, $5::jsonb, $6, $7, $8)
+            VALUES ($1, $2::jsonb, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12)
             ON CONFLICT (case_id) DO UPDATE SET
                 shap_features = EXCLUDED.shap_features,
                 bottleneck_cause_type = EXCLUDED.bottleneck_cause_type,
+                primary_cause_feature = EXCLUDED.primary_cause_feature,
+                cause_judgment_json = EXCLUDED.cause_judgment_json,
+                consensus_json = EXCLUDED.consensus_json,
+                trend_json = EXCLUDED.trend_json,
                 diffusion_affected_tg_ids = EXCLUDED.diffusion_affected_tg_ids,
                 rag_referenced_case_ids = EXCLUDED.rag_referenced_case_ids,
                 model_accuracy = EXCLUDED.model_accuracy,
@@ -52,6 +65,10 @@ class CauseAnalysisRepository:
             case_id,
             json.dumps(shap_features),
             cause_type,
+            primary_cause_feature,
+            cause_judgment_json,
+            consensus_json,
+            trend_json,
             json.dumps([str(tg_id) for tg_id in affected_ids]),
             json.dumps([]),
             model_accuracy,
