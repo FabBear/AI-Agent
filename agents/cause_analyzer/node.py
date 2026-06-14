@@ -62,26 +62,23 @@ def analyze_cause(
     else:
         _log.info("[G*] 파일 없음 — G* 미반영")
 
-    # G* MC 30회 중위값 — 통계 검정(kpi_evidence) 전용, 시뮬 예측과 독립
+    forward_kpis: dict = {}
     manifest_csv = fwd_base_dir / "runs_manifest.csv"
-
-    # 시뮬 예측 display용: 1200분 단일 실행 (G* MC와 별개)
-    forecast_kpis: dict = {}
-    if run_sim:
+    if manifest_csv.is_file():
+        from agents.sim_runner.forecaster import load_forward_kpis_median
+        forward_kpis = load_forward_kpis_median(manifest_csv)
+        if forward_kpis:
+            _log.info(f"[Forward KPI] G* baseline 30회 중위값 — {len(forward_kpis)}개 TG")
+    if not forward_kpis and run_sim:
         try:
             from agents.sim_runner.forecaster import load_forward_kpis
             from agents.sim_runner.trigger import run_forward
-            fwd_csv_dir = run_forward(t0=snapshot_time, horizon_min=1200.0)
-            forecast_kpis = load_forward_kpis(fwd_csv_dir)
-            _log.info(f"[Forecast 20h] 완료 — {len(forecast_kpis)}개 TG  t+1200")
+            _log.info("[Forward Sim] G* baseline 없음 — 1회 fallback")
+            fwd_csv_dir = run_forward(t0=snapshot_time, horizon_min=120.0)
+            forward_kpis = load_forward_kpis(fwd_csv_dir)
+            _log.info(f"[Forward Sim] 완료 — {len(forward_kpis)}개 TG")
         except Exception as e:
-            _log.warning(f"[Forecast 20h 스킵] {type(e).__name__}: {e}")
-    if not forecast_kpis and manifest_csv.is_file():
-        # 1200분 실행 실패 시 G* 30회 중위값(120min)으로 fallback
-        from agents.sim_runner.forecaster import load_forward_kpis_median
-        forecast_kpis = load_forward_kpis_median(manifest_csv)
-        if forecast_kpis:
-            _log.info(f"[Forecast fallback] G* 중위값 사용 — {len(forecast_kpis)}개 TG")
+            _log.warning(f"[Forward Sim 스킵] {type(e).__name__}: {e}")
 
     prev_kpi_list = state["prev_kpi_snapshot"] or None
     reports: list[CauseReport] = []
@@ -103,9 +100,9 @@ def analyze_cause(
             g_star.kpi_evidence.get(tg, []) if g_star and g_star.kpi_evidence else []
         )
 
-        # ── 4. Forward 시뮬레이션 비교 (display: 1200분 / scoring: gets_worse)
+        # ── 4. Forward 시뮬레이션 비교 (evidence scoring에 사용)
         sim_forecast: SimForecast | None = None
-        future_kpi = forecast_kpis.get(tg)
+        future_kpi = forward_kpis.get(tg)
         if future_kpi is not None:
             from agents.sim_runner.forecaster import compare_kpis
             comparison = compare_kpis(kpi, future_kpi)
@@ -123,8 +120,7 @@ def analyze_cause(
             )
 
         # ── 5. 트렌드 + Evidence Aggregation + LLM Judge (재시도 루프)
-        shap_feature_names = [s.feature for s in shap_top]
-        trend_top = get_trend_top(window, tg, top_n=3, priority_features=shap_feature_names)
+        trend_top = get_trend_top(window, tg, top_n=3)
         evidence_bundle = []
         categories = []
         judgment = None
@@ -158,19 +154,18 @@ def analyze_cause(
         g_star_set = set(g_star.toolgroups if g_star else [])
         g_star_confirmed = tg in g_star_set
         g_star_sig_kpis = []
-        if g_star and g_star.kpi_evidence:
+        if g_star_confirmed and g_star and g_star.kpi_evidence:
             raw_evs = g_star.kpi_evidence.get(tg, [])
-            if raw_evs:
-                g_star_sig_kpis = [
-                    GStarKpiResult(
-                        kpi=e.kpi, delta_mean=e.delta_mean,
-                        t_p_adj=e.t_p_adj, significant=e.significant,
-                    )
-                    for e in sorted(
-                        raw_evs,
-                        key=lambda e: (0 if e.significant else 1, -abs(e.delta_mean)),
-                    )
-                ]
+            g_star_sig_kpis = [
+                GStarKpiResult(
+                    kpi=e.kpi, delta_mean=e.delta_mean,
+                    t_p_adj=e.t_p_adj, significant=e.significant,
+                )
+                for e in sorted(
+                    raw_evs,
+                    key=lambda e: (0 if e.significant else 1, -abs(e.delta_mean)),
+                )
+            ]
 
         agreed = [judgment.primary_cause] + list(judgment.secondary_causes or [])
         consensus = ConsensusResult(

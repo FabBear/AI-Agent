@@ -52,8 +52,7 @@ _VENV_PYTHON = Path(sys.executable) if _IS_DOCKER else _SIM_ROOT / ".venv" / "bi
 _RUNNER = _SIM_ROOT / "run_sim_forward_once.py"
 _VERIFY_OUT = _SIM_ROOT / "sim_verify_out"
 
-HORIZON_MIN = 120.0          # 통계 검정용 paired t-test (30회)
-DISPLAY_HORIZON_MIN = 1200.0 # KPI 효과 표시용 단일 시뮬
+HORIZON_MIN = 120.0
 
 
 # ── manifest 경로 (T0 기반 동적) ──────────────────────────────────────────────
@@ -579,47 +578,6 @@ def run_whatif_paired(
 
     _log.info(f"[Exec] {group_id} 완료 — {len(pairs)}/{len(manifest_runs)} paired runs")
     return group_id, pairs, baseline_id
-
-
-def run_whatif_single_display(
-    t0: float,
-    action_rows: list[dict],
-    release_interval_multiplier: float,
-    label: str,
-    lot_adjustments: list[dict] | None = None,
-) -> Path | None:
-    """KPI 효과 표시용 단일 WHATIF 시뮬 (DISPLAY_HORIZON_MIN=1200min). paired 통계 검정과 무관."""
-    baseline_id = find_baseline_scenario(t0)
-    if baseline_id is None:
-        _log.warning(f"[Display Whatif] baseline 없음 — 스킵 ({label})")
-        return None
-
-    whatif_id = f"DISPLAY_{label}_{int(t0)}_{uuid.uuid4().hex[:4]}"
-    whatif_csv_dir = _VERIFY_OUT / "display" / whatif_id
-    whatif_csv_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        _create_whatif_scenario(whatif_id, t0, DISPLAY_HORIZON_MIN, baseline_id)
-        _copy_snapshots(baseline_id, whatif_id, release_interval_multiplier, t0, lot_adjustments)
-        _insert_whatif_actions(whatif_id, action_rows)
-        _promote_to_validated(whatif_id)
-    except Exception as e:
-        _log.error(f"[Display Whatif] DB 셋업 실패 ({label}): {e}")
-        return None
-
-    result = subprocess.run(
-        [str(_VENV_PYTHON), str(_RUNNER),
-         "--scenario-id", whatif_id,
-         "--csv-dir", str(whatif_csv_dir)],
-        capture_output=True, text=True,
-        timeout=600, cwd=str(_SIM_ROOT),
-    )
-    if result.returncode != 0:
-        _log.error(f"[Display Whatif] 시뮬 실패 ({label}): {result.stderr[-300:]}")
-        return None
-
-    _log.info(f"[Display Whatif] {label} 1200min 완료: {whatif_csv_dir.name}")
-    return whatif_csv_dir
 
 
 # ── 사후 정리 ──────────────────────────────────────────────────────────────────

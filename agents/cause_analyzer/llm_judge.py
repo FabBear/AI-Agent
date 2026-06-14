@@ -101,17 +101,7 @@ def _build_prompt(
     g_star_text = ""
     if g_star:
         confirmed = toolgroup in (g_star.toolgroups or [])
-        conf_str = "포함(통계 확인)" if confirmed else "미포함"
-        kpi_evs = (g_star.kpi_evidence or {}).get(toolgroup, []) if g_star.kpi_evidence else []
-        if kpi_evs:
-            kpi_lines = []
-            for e in sorted(kpi_evs, key=lambda x: (0 if x.significant else 1, x.t_p_adj)):
-                verdict = "★유의" if e.significant else "비유의"
-                kpi_lines.append(f"  {e.kpi}: Δ={e.delta_mean:+.3f}  p={e.t_p_adj:.4f}  {verdict}")
-            note = "※ p≈0=포워드 시뮬에서 베이스라인 대비 유의미하게 증가(병목 증거), p≈1=오히려 감소 또는 정상(병목 무관)"
-            g_star_text = f"\n[G* 통계 검정] TG={conf_str}\n{note}\n" + "\n".join(kpi_lines)
-        else:
-            g_star_text = f"\n[G* 통계 검정]: {conf_str}  (KPI 증거 없음)"
+        g_star_text = f"\n[G* TG 포함]: {'포함(통계 확인)' if confirmed else '미포함'}"
 
     return f"""반도체 FAB '{toolgroup}' 공정 병목 원인 판정.
 {retry_note}
@@ -123,22 +113,21 @@ def _build_prompt(
 판정 기준:
 1. total_score 가장 높은 카테고리 → primary_category
 2. SHAP기여율 50% 이상이면 score 낮아도 우선 고려
-3. G* 통계 검정에서 ★유의(p<0.05) KPI가 존재하면 → 해당 KPI가 속한 카테고리를 최우선 고려하고, primary_reasoning에 반드시 유의 KPI명과 p값을 인용할 것
+3. G* 확인 카테고리 → score 관계없이 최우선
 4. 1·2위 score 차이 < 0.15이고 최고 score < 0.4 → needs_more_data=true
-5. secondary_causes: primary_category와 score 차이가 0.10 미만인 카테고리만 포함 (보통 빈 배열)
-6. cause_summary: [주요 원인 카테고리 + 대표피처] / [G* 통계: ★유의 KPI명(p값) — 있을 때만] / [악화 추세 — 있을 때만] / [2시간 전망 — 있을 때만]
+5. cause_summary: [주요 원인] / [악화 추세] / [업스트림(있을때)] / [2시간 전망(있을때)]
 
 반드시 아래 JSON만 출력하세요:
 {{
   "primary_category": "카테고리명",
   "primary_cause": "카테고리 내 대표 피처명 (SHAP 기여 가장 큰 것)",
   "primary_confidence": "HIGH|MEDIUM|LOW",
-  "primary_reasoning": "판정 근거 1~2문장 (수치 포함, G* ★유의 KPI 있으면 반드시 인용)",
-  "secondary_causes": ["primary와 score 차이 0.10 미만인 카테고리만, 보통 빈 배열"],
+  "primary_reasoning": "판정 근거 1~2문장 (수치 포함)",
+  "secondary_causes": ["보조 카테고리명"],
   "dismissed": ["기각 카테고리명"],
   "dismissed_reason": "기각 이유 (없으면 빈 문자열)",
   "needs_more_data": false,
-  "cause_summary": "[주요 원인] ... [G* 통계] ... [악화 추세] ..."
+  "cause_summary": "[주요 원인] ... [악화 추세] ..."
 }}"""
 
 

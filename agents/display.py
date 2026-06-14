@@ -70,46 +70,25 @@ def print_cause_reports(reports: list[CauseReport]) -> None:
         print("\n  [② KPI 트렌드]")
         if r.trend_top:
             for t in r.trend_top:
-                arrow = "↑" if t.slope_per_hour > 0 else "↓" if t.slope_per_hour < 0 else "─"
+                arrow = "↑" if t.slope_per_hour > 0 else "↓"
                 sig_mark = " ★유의" if t.significant else ""
                 r2_str = f"R²={t.r2:.2f}" if t.r2 > 0 else ""
                 print(f"    {t.feature:<28} {arrow} {t.slope_per_hour:+.4f}/h  {r2_str}{sig_mark}")
         else:
             print("    (데이터 없음)")
 
-        # ── 통계적 분석 (G* KPI 검정 + 시뮬 예측) — 카테고리 집계 전 근거로 제시
-        print(f"\n  [통계적 분석]")
+        # ── 업스트림
+        if r.upstream_suspects:
+            print(f"\n  [③ 업스트림 과부하]  {', '.join(r.upstream_suspects)}")
 
-        if r.consensus.g_star_sig_kpis:
-            conf_label = "TG 포함(통계 확인)" if r.consensus.g_star_confirmed else "TG 미포함"
-            print(f"  ┌ G* KPI 검정  [{conf_label}]  (p<0.05=유의)")
-            print(f"  {'지표':<28} {'Δ평균':>8}  {'p-value':>8}  결과")
-            print(f"  {'─' * 58}")
+        # ── G* T-test
+        if r.consensus.g_star_confirmed and r.consensus.g_star_sig_kpis:
+            print(f"\n  [④ G* T-test]")
             for e in r.consensus.g_star_sig_kpis:
-                verdict = "★ 유의" if e.significant else "─"
-                print(f"  {e.kpi:<28} {e.delta_mean:>+8.3f}  {e.t_p_adj:>8.4f}  {verdict}")
-        else:
-            print(f"  ┌ G* KPI 검정  (데이터 없음)")
+                verdict = "★ 통계 확인" if e.significant else "비유의"
+                print(f"    {e.kpi:<28} Δ={e.delta_mean:+.1f}  p={e.t_p_adj:.4f}  {verdict}")
 
-        if r.sim_forecast:
-            f = r.sim_forecast
-            horizon_h = (f.t_future - f.t0) / 60
-            horizon_label = f"{horizon_h:.0f}h 후"
-            print(f"\n  ┌ 시뮬 예측  t={f.t0:.0f} → t={f.t_future:.0f}  (+{horizon_h:.0f}h)")
-            print(f"  {'지표':<22} {'현재':>8}  {horizon_label:>8}  {'변화':>8}")
-            print(f"  {'─' * 54}")
-            for kpi, comp in f.kpi_delta.items():
-                arrow = "↑" if comp.delta > 0 else "↓" if comp.delta < 0 else "─"
-                warn = " ⚠" if abs(comp.pct_change) > 20 else ""
-                print(
-                    f"  {kpi:<22} {comp.now:>8.2f}  {comp.future:>8.2f}"
-                    f"  {comp.pct_change:>+6.1f}% {arrow}{warn}"
-                )
-            status = "⚠ 악화 예상" if f.gets_worse else "✓ 안정 유지"
-            print(f"  {'─' * 54}")
-            print(f"  전망: {status}")
-
-        # ── 카테고리 수렴
+        # ── 카테고리 수렴 (핵심 신규)
         if r.cause_categories:
             print(f"\n  [카테고리 수렴 분석] — 4가지 분석 종합 (score 순)")
             bar_max = max((c.total_score for c in r.cause_categories), default=1.0) or 1.0
@@ -118,15 +97,16 @@ def print_cause_reports(reports: list[CauseReport]) -> None:
                 bar = "█" * bar_len + "░" * (20 - bar_len)
                 trend_str = f"Trend★={cat.n_trend_significant}" if cat.n_trend_significant else "Trend=0"
                 g_str = "G*=확인" if cat.g_star_confirmed else "G*=✗"
-                extras = " | ".join(filter(None, [trend_str, g_str]))
+                ups_str = "Up=있음" if cat.upstream_match else ""
+                extras = " | ".join(filter(None, [trend_str, g_str, ups_str]))
                 conf_icon = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(cat.confidence, "")
                 print(
                     f"    {cat.name:<10} {bar}  "
-                    f"SHAP={cat.shap_share_pct:5.1f}%  {extras:<20}  "
+                    f"SHAP={cat.shap_share_pct:5.1f}%  {extras:<30}  "
                     f"score={cat.total_score:.3f}  {conf_icon}[{cat.confidence}]"
                 )
 
-        # ── LLM 판정
+        # ── LLM 판정 결과 (핵심 신규)
         if r.judgment:
             j = r.judgment
             conf_icon = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(j.primary_confidence, "")
@@ -140,6 +120,23 @@ def print_cause_reports(reports: list[CauseReport]) -> None:
                 print(f"    기각: {', '.join(j.dismissed)}")
                 if j.dismissed_reason:
                     print(f"           → {j.dismissed_reason}")
+
+        # ── 시뮬 예측
+        if r.sim_forecast:
+            f = r.sim_forecast
+            print(f"\n  [2시간 후 시뮬 예측]  t={f.t0:.0f} → t={f.t_future:.0f}")
+            print(f"  {'지표':<22} {'현재':>8}  {'2h 후':>8}  {'변화':>8}")
+            print(f"  {'─' * 54}")
+            for kpi, comp in f.kpi_delta.items():
+                arrow = "↑" if comp.delta > 0 else "↓" if comp.delta < 0 else "─"
+                warn = " ⚠" if abs(comp.pct_change) > 20 else ""
+                print(
+                    f"  {kpi:<22} {comp.now:>8.2f}  {comp.future:>8.2f}"
+                    f"  {comp.pct_change:>+6.1f}% {arrow}{warn}"
+                )
+            status = "⚠ 악화 예상" if f.gets_worse else "✓ 안정 유지"
+            print(f"  {'─' * 54}")
+            print(f"  전망: {status}")
 
         print(f"\n  📝 {r.cause_summary}")
         print("─" * 70)
@@ -231,64 +228,6 @@ def print_solutions(solutions: list[dict]) -> None:
             if effect:
                 print(f"      기대 효과             : {effect[:200]}")
         print("─" * 70)
-
-
-def print_verification_kpi_effects(verification_results: list[dict]) -> None:
-    """대응안 효과 검증 결과 출력.
-
-    - 통계 검정(120min 30회 paired t-test): verdict / p-value
-    - KPI 효과(1200min): baseline vs whatif 비교
-    """
-    global_plan_groups = [g for g in verification_results if "plan_id" in g]
-    if not global_plan_groups:
-        return
-    print("=" * 70)
-    print("  대응안 효과 검증")
-    print("=" * 70)
-
-    _plan_label = {"conservative": "보수적", "standard": "표준", "aggressive": "강화"}
-    _better_dir = {
-        "wip": -1,
-        "wait_ratio": -1,
-        "available_tool_ratio": 1,
-        "utilization_avg": -1,
-    }
-
-    for g in global_plan_groups:
-        plan_id = g.get("plan_id", "-")
-        label = _plan_label.get(plan_id, plan_id)
-        anchor_tg = g.get("anchor_tg", "-")
-        verified = g.get("verified_candidates", [])
-        kpi_effect = g.get("kpi_effect_1200", {})
-
-        # 통계 검정 결과 (120min paired)
-        for cand in verified:
-            verdict = cand.get("verdict", "-")
-            p = cand.get("paired_t_p")
-            n = cand.get("paired_n", 0)
-            p_str = f"  p={p:.4f}" if p is not None else ""
-            verdict_icon = "✓" if verdict == "effective" else "✗"
-            print(f"\n  [{label} ({plan_id})]")
-            print(f"    통계 검정(120min ×{n}): {verdict_icon} {verdict}{p_str}")
-
-        # 1200min KPI 효과 비교
-        if kpi_effect:
-            print(f"    KPI 효과 ({anchor_tg})  기준선 → 대응안  (t+20h)")
-            print(f"    {'지표':<24} {'기준선(1200)':>10}  {'대응안':>8}  {'변화':>8}")
-            print(f"    {'─' * 54}")
-            for kpi_field, vals in kpi_effect.items():
-                bv = vals["baseline"]
-                wv = vals["whatif"]
-                pct = vals["pct_change"]
-                better = _better_dir.get(kpi_field, -1)
-                improved = (pct < -1 and better < 0) or (pct > 1 and better > 0)
-                mark = " ✓" if improved else ""
-                arrow = "↓" if wv < bv else "↑" if wv > bv else "─"
-                print(f"    {kpi_field:<24} {bv:>10.3f}  {wv:>8.3f}  {pct:>+6.1f}% {arrow}{mark}")
-        else:
-            print(f"    (1200min 효과 데이터 없음)")
-
-    print("─" * 70)
 
 
 def print_report_results(report_results: list[dict]) -> None:
