@@ -84,14 +84,18 @@ def load_g_star(t0: float, out_dir: Path | None = None) -> GStarResult | None:
         if stat_tgs:
             result.toolgroups = stat_tgs
 
-        # evidence CSV 로드
-        evidence_csv = gsa.get("evidence_csv", "")
-        if evidence_csv:
-            evidence_path = Path(evidence_csv)
-            if not evidence_path.is_absolute():
-                evidence_path = base / evidence_csv
-            if evidence_path.exists():
-                result.kpi_evidence = _load_evidence(evidence_path)
+        # evidence: 인라인 JSON 우선, 없으면 CSV 파일 경로 시도
+        inline_evs = gsa.get("g_star_kpi_evidence", [])
+        if inline_evs:
+            result.kpi_evidence = _load_evidence_inline(inline_evs)
+        else:
+            evidence_csv = gsa.get("evidence_csv", "")
+            if evidence_csv:
+                evidence_path = Path(evidence_csv)
+                if not evidence_path.is_absolute():
+                    evidence_path = base / evidence_csv
+                if evidence_path.exists():
+                    result.kpi_evidence = _load_evidence(evidence_path)
 
     return result
 
@@ -121,3 +125,32 @@ def _load_evidence(path: Path) -> dict[str, list[KpiEvidence]]:
         return evidence
     except Exception:
         return {}
+
+
+def _load_evidence_inline(records: list[dict]) -> dict[str, list[KpiEvidence]]:
+    """handoff JSON의 g_star_kpi_evidence 인라인 배열 → {toolgroup: [KpiEvidence]}.
+
+    null 값 레코드(insufficient_history)는 자동으로 건너뜀.
+    """
+    evidence: dict[str, list[KpiEvidence]] = {}
+    for rec in records:
+        tg = str(rec.get("toolgroup", ""))
+        kpi = str(rec.get("kpi", ""))
+        if not tg or not kpi:
+            continue
+        # null 값이 있으면 통계 검정이 실패한 항목 → 건너뜀
+        delta_mean = rec.get("delta_mean")
+        t_p_adj = rec.get("t_p_adj")
+        if delta_mean is None or t_p_adj is None:
+            continue
+        try:
+            ev = KpiEvidence(
+                kpi=kpi,
+                delta_mean=float(delta_mean),
+                t_p_adj=float(t_p_adj),
+                significant=bool(int(rec.get("kpi_significant", 0))),
+            )
+            evidence.setdefault(tg, []).append(ev)
+        except (ValueError, TypeError):
+            continue
+    return evidence

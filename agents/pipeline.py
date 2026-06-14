@@ -31,9 +31,7 @@ _log = get_logger(__name__)
 _SIM_ROOT = Path(__file__).parent.parent.parent / "Simulation" / "simulation"
 _SIM_CSV = _SIM_ROOT / "sim_csv_out"
 _SIM_PY = _SIM_ROOT / ".venv" / "bin" / "python"
-_ML_G_STAR = _SIM_ROOT / "tools" / "ml_g_star_at_t0.py"
 _TRIGGER_FWD = _SIM_ROOT / "tools" / "trigger_forward_pipeline.py"
-_G_STAR_OUT = _SIM_ROOT / "out" / "ml_g_star_e2e"
 
 
 def _read_run_id(csv_dir: Path) -> str:
@@ -55,54 +53,60 @@ def _no_alerts(state: PipelineState) -> str:
 
 
 def _run_g_star(state: PipelineState) -> PipelineState:
-    """Critical/High 알림 발생 시 G* 파이프라인을 실행한다."""
-    # T0 = kpi_snapshot의 time_step (시뮬 tick 기준, epoch-minutes 아님)
+    """병목 감지 에이전트의 CRITICAL/HIGH TG를 기반으로 G* 통계 검정 파이프라인을 실행한다.
+
+    ML 임계값 대신 이미 감지된 병목 TG를 직접 사용하므로,
+    원인 분석 에이전트가 항상 G* 통계 근거를 가진 상태로 진입할 수 있다.
+    """
+    import json as _json
+    from agents.schemas.alert import SeverityLevel
+
     kpi_snapshot = state["kpi_snapshot"]
     if not kpi_snapshot:
         _log.warning("[G*] kpi_snapshot 없음 — G*를 스킵합니다.")
         return state
+
     snapshot_time = kpi_snapshot[0].snapshot_time
     alerts = state["alerts"]
-    anchor = max(alerts, key=lambda a: a.composite_score).toolgroup if alerts else ""
+
+    # CRITICAL TG만 G* 분석 대상 (composite_score 내림차순)
+    target_alerts = sorted(
+        [a for a in alerts if a.severity == SeverityLevel.CRITICAL],
+        key=lambda a: -a.composite_score,
+    )
+    if not target_alerts:
+        _log.info("[G*] CRITICAL 알림 없음 — G*를 스킵합니다.")
+        return state
+
+    anchor = target_alerts[0].toolgroup
+    target_tgs = [a.toolgroup for a in target_alerts]
     scenario_id = f"FWD_G_STAR_T{int(snapshot_time)}"
 
-    # T0 기반 동적 경로: G* 결과 + WHATIF baseline manifest 모두 여기에 저장
     fwd_base_dir = _SIM_CSV / f"fwd_base_t{int(snapshot_time)}"
     fwd_base_dir.mkdir(parents=True, exist_ok=True)
     g_star_file = fwd_base_dir / f"g_star_T{int(snapshot_time)}.json"
 
     run_id = _read_run_id(_SIM_CSV)
     if not run_id:
-        _log.warning("[G*] sim_csv_out/lot_events.csv에서 run_id를 읽을 수 없어 G*를 스킵합니다.")
+        _log.warning("[G*] run_id 없음 — G*를 스킵합니다.")
         return state
 
-    _log.info(f"[G*] 실행 중... t0={snapshot_time}, anchor={anchor}, out={fwd_base_dir.name}")
+    # Step 1: 병목 감지 결과로 g_star JSON 직접 생성 (ML 임계값 대신)
+    g_star_data = {
+        "anchor_tg": anchor,
+        "toolgroups": target_tgs,
+        "n_g_star": len(target_tgs),
+        "t0_sim_minute": snapshot_time,
+        "source": "bottleneck_detector",
+    }
+    g_star_file.write_text(
+        _json.dumps(g_star_data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    _log.info(
+        f"[G*] Step1 완료 — {len(target_tgs)}개 TG (CRITICAL/HIGH): {target_tgs}"
+    )
 
-    # Step 1: ML G* at T0
-    try:
-        r = subprocess.run(
-            [str(_SIM_PY), str(_ML_G_STAR),
-             "--train-csv-dir", str(_SIM_CSV),
-             "--inference-csv-dir", str(_SIM_CSV),
-             "--t0", str(int(snapshot_time)),
-             "--out-dir", str(fwd_base_dir),
-             "--alarm-threshold", "0.7",
-             "--snapshot-stride", "10",
-             "--shap-top-k", "0"],
-            capture_output=True, text=True,
-            timeout=120, cwd=str(_SIM_ROOT),
-        )
-        if r.returncode == 0:
-            _log.info(f"[G*] Step1 완료 — {g_star_file.name}")
-        else:
-            _log.warning(f"[G*] Step1 실패: {r.stderr[-200:]}")
-            return state
-    except Exception as e:
-        _log.warning(f"[G*] Step1 스킵: {e}")
-        return state
-
-    # Step 2: trigger_forward_pipeline (Monte Carlo 30회 + t-test) — DB 모드
-    # runs_manifest.csv + agent_handoff_g_star_analysis.json 모두 fwd_base_dir에 저장
+    # Step 2: trigger_forward_pipeline (Monte Carlo 30회 + t-test)
     try:
         r = subprocess.run(
             [str(_SIM_PY), str(_TRIGGER_FWD),
@@ -116,6 +120,7 @@ def _run_g_star(state: PipelineState) -> PipelineState:
              "--n-runs", "30",
              "--parallel", "8",
              "--out-dir", str(fwd_base_dir),
+             "--baseline-csv-dir", str(_SIM_CSV),
              "--skip-sim-if-manifest-exists"],
             capture_output=True, text=True,
             timeout=600, cwd=str(_SIM_ROOT),

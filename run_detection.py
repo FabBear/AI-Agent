@@ -15,7 +15,13 @@ import os
 
 import agents.token_tracker as token_tracker
 from agents.data.kpi_loader import load_kpi_snapshot, load_kpi_window
-from agents.display import print_alert_table, print_cause_reports, print_solutions, print_report_results
+from agents.display import (
+    print_alert_table,
+    print_cause_reports,
+    print_report_results,
+    print_solutions,
+    print_verification_kpi_effects,
+)
 from agents.pipeline import build_pipeline
 from agents.state import PipelineState
 
@@ -87,6 +93,11 @@ def main() -> None:
                 if args.cause_only:
                     solutions = [s for s in solutions if s.get("toolgroup") == args.cause_only]
                 print_solutions(solutions)
+
+            elif node_name == "verify":
+                vr = state.get("verification_results", [])
+                if vr:
+                    print_verification_kpi_effects(vr)
 
             elif node_name == "report_save":
                 print_report_results(state.get("report_results", []))
