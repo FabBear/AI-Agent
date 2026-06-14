@@ -48,12 +48,12 @@ class ActionPlanRepository:
                         self._plan_title(candidate, sequence),
                         self._plan_detail(candidate),
                         json.dumps(candidate, ensure_ascii=False),
-                        kpi.get("est_util_delta"),
-                        kpi.get("est_q_time_delta"),
-                        kpi.get("est_wip_delta"),
-                        kpi.get("est_wait_ratio_delta"),
-                        kpi.get("sim_paired_n"),
-                        kpi.get("sim_paired_p_value"),
+                        kpi.get("utilization_avg", {}).get("mean_delta"),
+                        kpi.get("q_time_min", {}).get("mean_delta"),
+                        kpi.get("wip", {}).get("mean_delta"),
+                        kpi.get("wait_ratio", {}).get("mean_delta"),
+                        kpi.get("q_time_min", {}).get("paired_n"),
+                        kpi.get("q_time_min", {}).get("paired_t_p"),
                     )
 
     async def find_by_id(self, case_id: UUID, plan_id: UUID) -> dict | None:
