@@ -159,14 +159,52 @@ def _build_cause_context(toolgroup: str, cause_reports: list) -> dict:
                 trend_top.append({"feature": t.feature, "slope_per_hour": round(float(t.slope_per_hour), 4)})
 
         consensus_raw = _attr(report, "consensus", {}) or {}
-        consensus_summary = (
-            consensus_raw.get("summary", "") if isinstance(consensus_raw, dict)
-            else getattr(consensus_raw, "summary", "")
-        )
-        consensus_confidence = (
-            consensus_raw.get("confidence_level", "LOW") if isinstance(consensus_raw, dict)
-            else getattr(consensus_raw, "confidence_level", "LOW")
-        )
+        def _c(key, default=None):
+            return consensus_raw.get(key, default) if isinstance(consensus_raw, dict) else getattr(consensus_raw, key, default)
+
+        g_star_sig_kpis = []
+        for k in (_c("g_star_sig_kpis") or []):
+            if isinstance(k, dict):
+                g_star_sig_kpis.append(k)
+            else:
+                g_star_sig_kpis.append({
+                    "kpi": k.kpi,
+                    "delta_mean": round(float(k.delta_mean), 4),
+                    "t_p_adj": round(float(k.t_p_adj), 4),
+                    "significant": k.significant,
+                })
+
+        judgment_raw = _attr(report, "judgment", None)
+        judgment = None
+        if judgment_raw is not None:
+            if isinstance(judgment_raw, dict):
+                judgment = judgment_raw
+            else:
+                judgment = {
+                    "primary_category": getattr(judgment_raw, "primary_category", ""),
+                    "primary_cause": getattr(judgment_raw, "primary_cause", ""),
+                    "primary_confidence": getattr(judgment_raw, "primary_confidence", "LOW"),
+                    "primary_reasoning": getattr(judgment_raw, "primary_reasoning", ""),
+                    "secondary_causes": list(getattr(judgment_raw, "secondary_causes", None) or []),
+                    "dismissed": list(getattr(judgment_raw, "dismissed", None) or []),
+                    "dismissed_reason": getattr(judgment_raw, "dismissed_reason", ""),
+                    "cause_summary": getattr(judgment_raw, "cause_summary", ""),
+                }
+
+        categories = []
+        for cat in (_attr(report, "cause_categories", []) or []):
+            if isinstance(cat, dict):
+                categories.append(cat)
+            else:
+                categories.append({
+                    "name": cat.name,
+                    "features": cat.features,
+                    "shap_share_pct": round(float(cat.shap_share_pct), 1),
+                    "n_trend_significant": cat.n_trend_significant,
+                    "g_star_confirmed": cat.g_star_confirmed,
+                    "total_score": round(float(cat.total_score), 3),
+                    "confidence": cat.confidence,
+                })
 
         sf_raw = _attr(report, "sim_forecast", None)
         sim_forecast = (
@@ -178,8 +216,13 @@ def _build_cause_context(toolgroup: str, cause_reports: list) -> dict:
             "shap_top": shap_top,
             "trend_top": trend_top,
             "upstream_suspects": list(_attr(report, "upstream_suspects", []) or [])[:3],
-            "consensus_summary": consensus_summary,
-            "consensus_confidence": consensus_confidence,
+            "consensus_summary": _c("summary", ""),
+            "consensus_confidence": _c("confidence_level", "LOW"),
+            "g_star_confirmed": _c("g_star_confirmed", False),
+            "g_star_proba": _c("g_star_proba", 0.0),
+            "g_star_sig_kpis": g_star_sig_kpis,
+            "judgment": judgment,
+            "cause_categories": categories,
             "sim_forecast": sim_forecast,
         }
     return {}
@@ -257,7 +300,7 @@ def _build_current_state_block(ci: dict) -> dict:
 
 
 def _build_cause_block(ci: dict) -> dict:
-    """원인 분석 패널 — cause_summary, SHAP, trend, upstream, consensus."""
+    """원인 분석 패널 — SHAP, trend, G*, LLM 판정, 카테고리 수렴, 시뮬 예측 전체 포함."""
     cc = ci.get("cause_context") or {}
     if not cc:
         return {
@@ -266,6 +309,10 @@ def _build_cause_block(ci: dict) -> dict:
             "trend_top": [],
             "upstream_suspects": [],
             "consensus": {"confidence": "LOW", "summary": ""},
+            "g_star": {"confirmed": False, "proba": 0.0, "sig_kpis": []},
+            "judgment": None,
+            "cause_categories": [],
+            "sim_forecast": None,
         }
     return {
         "summary": cc.get("cause_summary", ""),
@@ -276,6 +323,14 @@ def _build_cause_block(ci: dict) -> dict:
             "confidence": cc.get("consensus_confidence", "LOW"),
             "summary": cc.get("consensus_summary", ""),
         },
+        "g_star": {
+            "confirmed": cc.get("g_star_confirmed", False),
+            "proba": cc.get("g_star_proba", 0.0),
+            "sig_kpis": cc.get("g_star_sig_kpis", []),
+        },
+        "judgment": cc.get("judgment"),
+        "cause_categories": cc.get("cause_categories", []),
+        "sim_forecast": cc.get("sim_forecast"),
     }
 
 
