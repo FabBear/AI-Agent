@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+import os
 import subprocess
 from pathlib import Path
 
@@ -15,7 +16,12 @@ from agents.logger import get_logger
 from agents.solution_generator.node import generate_solutions
 from agents.stage_writer import emit_stage1, emit_stage2
 from agents.verification_agent.node import verify_solutions
-from agents.compare_agent.node import compare_rank, compare_llm, compare_hitl
+from agents.compare_agent.node import (
+    compare_hitl,
+    compare_llm,
+    compare_rag,
+    compare_rank,
+)
 from agents.report_agent.node import (
     report_prepare,
     report_summary,
@@ -101,8 +107,9 @@ def _run_g_star(state: PipelineState) -> PipelineState:
         _log.warning(f"[G*] Step1 스킵: {e}")
         return state
 
-    # Step 2: trigger_forward_pipeline (Monte Carlo 30회 + t-test) — DB 모드
+    # Step 2: trigger_forward_pipeline (Monte Carlo + t-test) — DB 모드
     # runs_manifest.csv + agent_handoff_g_star_analysis.json 모두 fwd_base_dir에 저장
+    n_runs = os.environ.get("G_STAR_N_RUNS", "30")
     try:
         r = subprocess.run(
             [str(_SIM_PY), str(_TRIGGER_FWD),
@@ -113,7 +120,7 @@ def _run_g_star(state: PipelineState) -> PipelineState:
              "--scenario-id", scenario_id,
              "--g-star-file", str(g_star_file),
              "--anchor-tg", anchor,
-             "--n-runs", "30",
+             "--n-runs", n_runs,
              "--parallel", "8",
              "--out-dir", str(fwd_base_dir),
              "--skip-sim-if-manifest-exists"],
@@ -133,19 +140,19 @@ def _run_g_star(state: PipelineState) -> PipelineState:
 def build_pipeline(
     run_sim: bool = True,
     run_g_star: bool = True,
-    phase1_only: bool | None = None,
+    stop_at_hitl: bool | None = None,
     run_detection: bool = True,
 ):
     """파이프라인 그래프를 빌드하고 컴파일된 그래프를 반환한다.
 
-    phase1_only=True  : detect → … → compare_hitl → END  (Webhook 모드 Phase 1)
-    phase1_only=False : detect → … → compare_hitl → report_* → END  (일체형)
-    phase1_only=None  : WEBHOOK_MODE 환경변수로 자동 결정
+    stop_at_hitl=True  : detect → … → compare_hitl → END  (Webhook 모드 — HITL 승인 대기)
+    stop_at_hitl=False : detect → … → compare_hitl → report_* → END  (일체형)
+    stop_at_hitl=None  : WEBHOOK_MODE 환경변수로 자동 결정
     run_detection=False: 입력 state의 potential_bottlenecks를 사용해 cascade부터 실행
     """
     import os as _os
-    if phase1_only is None:
-        phase1_only = _os.environ.get("WEBHOOK_MODE", "").lower() in ("1", "true", "yes")
+    if stop_at_hitl is None:
+        stop_at_hitl = _os.environ.get("WEBHOOK_MODE", "").lower() in ("1", "true", "yes")
 
     g = StateGraph(PipelineState)
 
@@ -164,6 +171,7 @@ def build_pipeline(
     g.add_node("verify", verify_solutions)
     # Agent 5: 대응안 비교분석
     g.add_node("compare_rank", compare_rank)
+    g.add_node("compare_rag",  compare_rag)
     g.add_node("compare_llm",  compare_llm)
     g.add_node("compare_hitl", compare_hitl)
 
@@ -179,11 +187,12 @@ def build_pipeline(
     g.add_edge("emit2",    "solution")
     g.add_edge("solution", "verify")
     g.add_edge("verify",       "compare_rank")
-    g.add_edge("compare_rank", "compare_llm")
+    g.add_edge("compare_rank", "compare_rag")
+    g.add_edge("compare_rag",  "compare_llm")
     g.add_edge("compare_llm",  "compare_hitl")
 
-    if phase1_only:
-        # Phase 1 종료: compare_hitl → END
+    if stop_at_hitl:
+        # Webhook 모드: compare_hitl → END (보고서는 HITL 승인 후 별도 실행)
         g.add_edge("compare_hitl", END)
     else:
         # 일체형: compare_hitl → 보고서 생성
@@ -205,8 +214,8 @@ def build_pipeline(
     return g.compile()
 
 
-def build_phase2_pipeline():
-    """Phase 2 파이프라인: PipelineState를 재구성한 뒤 보고서 노드만 실행."""
+def build_report_pipeline():
+    """보고서 생성 파이프라인: HITL 승인 후 PipelineState를 재구성한 뒤 보고서 노드만 실행."""
     g = StateGraph(PipelineState)
 
     g.add_node("report_prepare",   report_prepare)

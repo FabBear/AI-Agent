@@ -1,14 +1,17 @@
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
+import app.services.agent_service as agent_service
 from agents.pipeline import build_pipeline
 from agents.schemas.kpi import ToolGroupKPI
 from app.services.agent_service import (
     _extract_summary,
+    _handle_pipeline_event,
     _initial_state,
-    _reconstruct_phase2_state,
+    _reconstruct_report_state,
 )
 
 
@@ -24,7 +27,7 @@ def test_extract_summary_counts_alerts() -> None:
     )
 
 
-def test_reconstruct_phase2_state_applies_selected_plan() -> None:
+def test_reconstruct_report_state_applies_selected_plan() -> None:
     pending = {
         "hitl_token": "token",
         "compare_formatted": [
@@ -42,7 +45,7 @@ def test_reconstruct_phase2_state_applies_selected_plan() -> None:
     }
     selected_plan = {"plan_seq": 2}
 
-    state = _reconstruct_phase2_state(
+    state = _reconstruct_report_state(
         pending,
         selected_plan,
         uuid4(),
@@ -84,7 +87,7 @@ def test_pipeline_can_start_from_cascade() -> None:
     pipeline = build_pipeline(
         run_sim=False,
         run_g_star=False,
-        phase1_only=True,
+        stop_at_hitl=True,
         run_detection=False,
     )
 
@@ -93,3 +96,36 @@ def test_pipeline_can_start_from_cascade() -> None:
     ]
 
     assert [edge.target for edge in start_edges] == ["cascade"]
+
+
+@pytest.mark.asyncio
+async def test_compare_llm_event_stores_matching_compare_result(monkeypatch) -> None:
+    case_id = uuid4()
+    expected = {
+        "meta": {"schema_version": "compare/2.0"},
+        "action_options": [{"label": "standard"}],
+    }
+    plan_repo = AsyncMock()
+    step_repo = AsyncMock()
+    spring_client = AsyncMock()
+    monkeypatch.setattr(agent_service, "_complete_step", AsyncMock())
+
+    next_step = await _handle_pipeline_event(
+        case_id=case_id,
+        node_name="compare_llm",
+        state={
+            "compare_formatted": [
+                {"toolgroup": "OTHER_TG", "result_v2": {"meta": {}}},
+                {"toolgroup": "DE_FE_1", "result_v2": expected},
+            ]
+        },
+        step_repo=step_repo,
+        cause_repo=AsyncMock(),
+        plan_repo=plan_repo,
+        spring_client=spring_client,
+        tg_code="DE_FE_1",
+    )
+
+    plan_repo.upsert_compare_json.assert_awaited_once_with(case_id, expected)
+    step_repo.mark_in_progress.assert_awaited_once_with(case_id, "hitl")
+    assert next_step == "hitl"

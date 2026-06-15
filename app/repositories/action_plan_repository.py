@@ -8,6 +8,18 @@ class ActionPlanRepository:
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
 
+    async def upsert_compare_json(self, case_id: UUID, result_v2: dict) -> None:
+        await self._pool.execute(
+            """
+            UPDATE tt_bottleneck_case
+            SET compare_json = $2::jsonb,
+                updated_at = NOW()
+            WHERE case_id = $1
+            """,
+            case_id,
+            json.dumps(result_v2, ensure_ascii=False),
+        )
+
     async def bulk_insert(self, case_id: UUID, candidates: list[dict]) -> None:
         async with self._pool.acquire() as connection:
             async with connection.transaction():

@@ -1,11 +1,11 @@
 """
-Phase 2 실행 스크립트: HITL 승인 후 최종보고서 생성.
+HITL 승인 후 최종보고서 생성 스크립트.
 
 사용법:
-    uv run python run_phase2.py --token <hitl_token>
-    uv run python run_phase2.py --token <hitl_token> --approved-by 김관리자 --role 공정관리자
-    uv run python run_phase2.py --token <hitl_token> --reject --reason "추가 검토 필요"
-    uv run python run_phase2.py --list
+    uv run python run_report.py --token <hitl_token>
+    uv run python run_report.py --token <hitl_token> --approved-by 김관리자 --role 공정관리자
+    uv run python run_report.py --token <hitl_token> --reject --reason "추가 검토 필요"
+    uv run python run_report.py --list
 """
 
 from __future__ import annotations
@@ -35,11 +35,11 @@ def list_pending() -> None:
         print(f"  token    : {token}")
         print(f"  생성시각 : {created_at}")
         print(f"  toolgroup: {', '.join(toolgroups)}")
-        print(f"  실행 명령: python run_phase2.py --token {token}")
+        print(f"  실행 명령: python run_report.py --token {token}")
         print()
 
 
-def run_phase2(
+def run_report_generation(
     token: str,
     approved_by: str,
     role: str,
@@ -50,7 +50,7 @@ def run_phase2(
     pending_path = _PENDING_DIR / f"{token}.json"
     if not pending_path.exists():
         print(f"[오류] 파일을 찾을 수 없습니다: {pending_path}")
-        print("  python run_phase2.py --list  로 토큰 목록을 확인하세요.")
+        print("  python run_report.py --list  로 토큰 목록을 확인하세요.")
         sys.exit(1)
 
     pending = json.loads(pending_path.read_text(encoding="utf-8"))
@@ -65,7 +65,7 @@ def run_phase2(
             "comment": None,
             "rejection_reason": reason or "사유 미입력",
         }
-        print(f"\n[Phase 2 시작 — 반려] token={token}")
+        print(f"\n[보고서 생성 시작 — 반려] token={token}")
         print(f"  검토자  : {approved_by} ({role})")
         print(f"  반려 사유: {approval_info['rejection_reason']}\n")
     else:
@@ -77,21 +77,21 @@ def run_phase2(
             "comment": comment or "즉시 적용 승인",
             "rejection_reason": None,
         }
-        print(f"\n[Phase 2 시작 — 승인] token={token}")
+        print(f"\n[보고서 생성 시작 — 승인] token={token}")
         print(f"  승인자: {approved_by} ({role})")
         print(f"  의견  : {approval_info['comment']}\n")
 
     state = _reconstruct_state(pending, approval_info)
 
-    from agents.pipeline import build_phase2_pipeline
+    from agents.pipeline import build_report_pipeline
     from agents.display import print_report_results
 
-    pipeline = build_phase2_pipeline()
+    pipeline = build_report_pipeline()
     result = pipeline.invoke(state)
 
     report_results = result.get("report_results", [])
     print_report_results(report_results)
-    print(f"\n[Phase 2 완료] 보고서 {len(report_results)}개 생성")
+    print(f"\n[보고서 생성 완료] 보고서 {len(report_results)}개 생성")
 
 
 def _reconstruct_state(pending: dict, approval_info: dict) -> dict:
@@ -107,6 +107,7 @@ def _reconstruct_state(pending: dict, approval_info: dict) -> dict:
             "recommendation": cf["recommendation"],
             "approval_info": approval_info,
             "action_effects": cf.get("action_effects", []),
+            "result_v2": cf.get("result_v2"),
             "json_output_path": "",
         }
         for cf in compare_formatted
@@ -132,8 +133,8 @@ def _reconstruct_state(pending: dict, approval_info: dict) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Phase 2 보고서 생성 (HITL 승인 후)")
-    parser.add_argument("--token", type=str, help="HITL 토큰 (Phase 1 완료 시 출력됨)")
+    parser = argparse.ArgumentParser(description="HITL 승인 후 최종보고서 생성")
+    parser.add_argument("--token", type=str, help="HITL 토큰 (분석 완료 시 출력됨)")
     parser.add_argument("--approved-by", type=str, default="관리자", help="승인자 이름")
     parser.add_argument("--role", type=str, default="공정관리자", help="승인자 직책")
     parser.add_argument("--comment", type=str, default="", help="승인 의견")
@@ -147,9 +148,9 @@ def main() -> None:
         return
 
     if not args.token:
-        parser.error("--token 이 필요합니다. (python run_phase2.py --list 로 토큰 확인)")
+        parser.error("--token 이 필요합니다. (python run_report.py --list 로 토큰 확인)")
 
-    run_phase2(
+    run_report_generation(
         token=args.token,
         approved_by=args.approved_by,
         role=args.role,

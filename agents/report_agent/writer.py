@@ -21,6 +21,7 @@ render_sections(report_v2, narration) → 4 sections dict
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -126,9 +127,9 @@ class ReportNarration(BaseModel):
     actions_summary: str = Field(
         ...,
         description=(
-            "승인된 대응안 요약 narrative. 'kpi_impact를 해석하여 한~두 문장'. "
-            "예: 'A 대응안은 Q-time을 145.3분에서 100.1분으로 감소시킬 것으로 "
-            "예측됨(시뮬레이션 기준).' 반려 상황이면 '반려됨 — 사유: ...' 한 줄. "
+            "승인된 대응안 요약 narrative. 대표 TG의 kpi_impact를 해석하여 "
+            "한~두 문장으로 요약할 것. TG 값을 평균 내거나 합산하지 말 것. "
+            "반려 상황이면 '반려됨 — 사유: ...' 한 줄. "
             "수치는 데이터에 있는 값을 그대로 사용. 문체 '~됨/~함/~임'."
         ),
     )
@@ -680,6 +681,35 @@ def _render_candidates_compare_table(report_v2: ReportV2) -> str:
     return "\n".join(lines)
 
 
+def _render_approved_tg_forecasts(report_v2: ReportV2) -> str:
+    approved = next(
+        (candidate for candidate in report_v2.actions.candidates if candidate.is_approved),
+        None,
+    )
+    if approved is None or not approved.per_tg_forecasts:
+        return ""
+
+    lines = [
+        "#### 대상 TG별 KPI 전망",
+        "",
+        "| Tool Group | q_time_min | WIP | wait_ratio | utilization_avg | available_tool_ratio |",
+        "|------------|------------|-----|------------|-----------------|----------------------|",
+    ]
+    for target_tg, forecast in approved.per_tg_forecasts.items():
+        current = forecast.get("current") or {}
+        action = forecast.get("action") or current
+
+        def sequence(kpi: str) -> str:
+            return f"{_md_cell(current.get(kpi))} → {_md_cell(action.get(kpi))}"
+
+        lines.append(
+            f"| {target_tg} | {sequence('q_time_min')} | {sequence('wip')} | "
+            f"{sequence('wait_ratio')} | {sequence('utilization_avg')} | "
+            f"{sequence('available_tool_ratio')} |"
+        )
+    return "\n".join(lines) + "\n\n"
+
+
 # ── 섹션 렌더링 (narrative + 표를 합쳐 마크다운 섹션 생성) ────────────────────
 
 def _render_summary(report_v2: ReportV2, narration: ReportNarration) -> str:
@@ -767,7 +797,79 @@ def _render_cause(report_v2: ReportV2, narration: ReportNarration) -> str:
     )
 
 
-def _render_actions(report_v2: ReportV2, narration: ReportNarration) -> str:
+def _render_rag_section(rag_evidence: dict) -> str:
+    """### ⑤ 사례 기반 근거 — 대응안별 RAG 평가 + 인사이트 + 참조 사례."""
+    candidates = rag_evidence.get("candidates") or []
+    comparison = rag_evidence.get("comparison") or {}
+    common_hits = rag_evidence.get("common_hits") or []
+
+    if not any(c.get("evidence") for c in candidates) and not common_hits:
+        return ""
+
+    _effect = {"high": "높음", "medium": "보통", "low": "낮음", "unknown": "-"}
+    _risk   = {"high": "높음", "medium": "보통", "low": "낮음", "unknown": "-"}
+
+    lines: list[str] = ["### ⑤ 사례 기반 근거\n"]
+
+    # 대응안별 평가 표
+    rows = [(c, c.get("evidence") or {}) for c in candidates if c.get("evidence")]
+    if rows:
+        lines += ["| 대응안 | 효과 전망 | 리스크 | 비고 |",
+                  "|--------|----------|--------|------|"]
+        for c, ev in rows:
+            label = _ACTION_LABEL_KO.get(c.get("label", ""), c.get("label", "-"))
+            effect  = _effect.get(ev.get("effect_outlook", "unknown"), "-")
+            risk    = _risk.get(ev.get("risk_level", "unknown"), "-")
+            raw = (ev.get("candidate_summary") or "").replace("\n", " ").replace("|", "／")
+            summary = raw[:80].rsplit(" ", 1)[0] if len(raw) > 80 else raw
+            lines.append(f"| {label} | {effect} | {risk} | {summary} |")
+        lines.append("")
+
+    # 종합 인사이트
+    insight = comparison.get("rag_summary") or comparison.get("overall_comment") or ""
+    if insight:
+        lines.append(f"**종합 인사이트**: {insight}\n")
+
+    # 참조 사례 — 같은 TG 그룹이면 헤더 하나로 묶어 표시
+    if common_hits:
+        def _extract_case_label(title: str) -> str:
+            m = re.search(r'\b(conservative|standard|aggressive)\b', title, re.IGNORECASE)
+            return m.group(1).lower() if m else ""
+
+        def _outcome_sentence(summary: str) -> str:
+            parts = [s.strip().rstrip(".") for s in summary.split(". ") if len(s.strip()) > 10]
+            if len(parts) >= 2:
+                return f"{parts[-2]} → {parts[-1]}"
+            return parts[-1] if parts else summary[:150]
+
+        tg_codes_h = [h.get("tg_code", "") for h in common_hits[:3]]
+        all_same_tg = len(set(tg_codes_h)) == 1 and bool(tg_codes_h[0])
+
+        if all_same_tg:
+            tg = tg_codes_h[0].replace("+", " + ")
+            cause = (common_hits[0].get("bottleneck_cause_type") or "").strip()
+            header = f"**참조 사례** — {tg} {cause} 복합 대응" if cause else f"**참조 사례** — {tg} 복합 대응"
+            lines.append(header)
+            for hit in common_hits[:3]:
+                title = hit.get("report_title") or hit.get("case_id") or "-"
+                lbl = _extract_case_label(title)
+                ko_lbl = _ACTION_LABEL_KO.get(lbl, lbl or title)
+                outcome = _outcome_sentence(hit.get("cause_summary") or "")
+                lines.append(f"- {ko_lbl}: {outcome}")
+        else:
+            lines.append("**참조 사례**")
+            for hit in common_hits[:3]:
+                title = hit.get("report_title") or hit.get("case_id") or "-"
+                lbl = _extract_case_label(title)
+                display = _ACTION_LABEL_KO.get(lbl, title) if lbl else title
+                outcome = _outcome_sentence(hit.get("cause_summary") or "")
+                lines.append(f"- {display}: {outcome}")
+        lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+def _render_actions(report_v2: ReportV2, narration: ReportNarration, rag_evidence: dict | None = None) -> str:
     actions = report_v2.actions
     approval = report_v2.approval
 
@@ -824,6 +926,7 @@ def _render_actions(report_v2: ReportV2, narration: ReportNarration) -> str:
         f"- **핵심 근거**: {primary_reason}\n"
         f"- **예상 효과**: {narration.actions_summary}\n\n"
     )
+    decision_block += _render_approved_tg_forecasts(report_v2)
 
     # ② 결정 근거 (트레이드오프 + 다른 후보 이유 + 주의사항)
     grounds_lines = ["### ② 결정 근거\n"]
@@ -861,7 +964,7 @@ def _render_actions(report_v2: ReportV2, narration: ReportNarration) -> str:
     if pb and pb.available:
         playbook_block = "### ③ 현장 조치 가이드\n\n#### 즉시 실행\n"
         for a in pb.immediate_actions:
-            playbook_block += f"{a.order}. {a.text}\n"
+            playbook_block += f"- {a.text}\n"
         if pb.monitoring:
             playbook_block += "\n#### 모니터링\n"
             for m in pb.monitoring:
@@ -875,22 +978,26 @@ def _render_actions(report_v2: ReportV2, narration: ReportNarration) -> str:
         f"{_render_candidates_compare_table(report_v2)}\n\n"
     )
 
+    # ⑤ 사례 기반 근거 (RAG)
+    rag_block = _render_rag_section(rag_evidence) if rag_evidence else ""
+
     return (
         f"{decision_block}"
         f"{grounds_block}"
         f"{playbook_block}"
         f"{compare_block}"
+        f"{rag_block}"
         "---"
     )
 
 
-def render_sections(report_v2: ReportV2, narration: ReportNarration) -> dict[str, str]:
+def render_sections(report_v2: ReportV2, narration: ReportNarration, rag_evidence: dict | None = None) -> dict[str, str]:
     """4개 섹션 마크다운을 한 번에 생성. 표는 코드, narrative는 LLM."""
     return {
         "summary":   _render_summary(report_v2, narration),
         "diffusion": _render_diffusion(report_v2, narration),
         "cause":     _render_cause(report_v2, narration),
-        "actions":   _render_actions(report_v2, narration),
+        "actions":   _render_actions(report_v2, narration, rag_evidence=rag_evidence),
     }
 
 

@@ -1,6 +1,6 @@
 """report_agent 입력 정규화 계층.
 
-- compare_result는 경로(Phase 1 all-in-one vs Phase 2 webhook)에 따라
+- compare_result는 경로(일체형 vs Webhook)에 따라
   서로 다른 shape으로 들어온다. 보고서는 이 차이를 모르고 동일하게 읽어야 한다.
 - 업스트림이 만든 NaN/Inf는 json.dumps 시 ECMA-262 위반 토큰이 되어
   Spring Jackson / 브라우저 JSON.parse를 깨뜨린다. 직렬화 전에 None으로 치환한다.
@@ -19,11 +19,11 @@ def normalize_compare_result(compare_result: dict) -> dict:
 
     두 가지 입력 shape을 모두 흡수한다.
 
-    Phase 1 (compare_agent/node.py:_build_compare_result):
+    일체형 (compare_agent/node.py:_build_compare_result):
         {toolgroup, result_v2: {action_options, recommendation, decision_meta, ...},
          approval_info, json_output_path}
 
-    Phase 2 (run_phase2.py:_reconstruct_state):
+    Webhook/HITL 승인 후 (run_report.py:_reconstruct_state):
         {toolgroup, recommendation, action_effects, approval_info, json_output_path}
         ※ result_v2 키가 없고, 일부 데이터가 누락된 경우가 있음
 
@@ -42,7 +42,7 @@ def normalize_compare_result(compare_result: dict) -> dict:
 
     result_v2 = compare_result.get("result_v2")
 
-    # Phase 1: result_v2 안에 모든 게 들어있는 케이스
+    # 일체형: result_v2 안에 모든 게 들어있는 케이스
     if isinstance(result_v2, dict) and result_v2:
         return {
             "action_options": list(result_v2.get("action_options") or []),
@@ -56,7 +56,7 @@ def normalize_compare_result(compare_result: dict) -> dict:
             "data_quality":   dict(result_v2.get("data_quality") or {}),
         }
 
-    # Phase 2: top-level에 평탄화된 케이스 — 가능한 키들을 모두 살핀다
+    # Webhook/HITL 승인 후: top-level에 평탄화된 케이스 — 가능한 키들을 모두 살핀다
     return {
         "action_options": list(
             compare_result.get("action_options")
