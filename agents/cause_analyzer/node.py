@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 from agents.cascade_analyzer.dag_builder import build_dag
@@ -68,7 +69,16 @@ def analyze_cause(
         from agents.sim_runner.forecaster import load_forward_kpis_median
         forward_kpis = load_forward_kpis_median(manifest_csv)
         if forward_kpis:
-            _log.info(f"[Forward KPI] G* baseline 30회 중위값 — {len(forward_kpis)}개 TG")
+            with manifest_csv.open(encoding="utf-8") as manifest_file:
+                paired_n = sum(
+                    1
+                    for row in csv.DictReader(manifest_file)
+                    if row.get("status") == "ok"
+                )
+            _log.info(
+                f"[Forward KPI] G* baseline {paired_n}회 중위값 — "
+                f"{len(forward_kpis)}개 TG"
+            )
     if not forward_kpis and run_sim:
         try:
             from agents.sim_runner.forecaster import load_forward_kpis

@@ -140,6 +140,8 @@ _SYS = """[역할]
 
 [입력 데이터 구조]
 - 현재 상태(기준점): 실제 KPI 절대값. 대응안의 kpi_delta는 이 값 대비 변화량.
+    - 복합 TG 입력에는 현재, 무대응 2시간 후, 대응안 2시간 후가 함께 제공됩니다.
+      점수와 후보 비교의 해석 기준은 무대응 2시간 후이며, 화면 표시용 대표 KPI는 별도로 anchor TG current → action 기준으로 보여질 수 있습니다.
 - 병목 원인 분석: SHAP 상위 요인, 트렌드 slope, 업스트림 의심 공정, 2h 자연 진행 예측.
 - 연쇄 영향: 후속 TG CT 증가, 위험 Lot 수.
 - 대응안 시뮬레이션: 각 후보 KPI delta, composite_score, verdict, confidence.
@@ -151,17 +153,18 @@ _SYS = """[역할]
 1. 반드시 한국어. FAB 용어(REQUEUE_TOOL 등) 원문 유지.
 2. 제공된 수치만 사용. 추측·반올림·단위 변환 금지.
 3. headline은 40자 이내. primary_reason은 1~2문장.
-4. 현재 상태를 기준으로 절대값+변화량 함께 표현. 예: "현재 WIP 820개 → A 적용 시 시뮬상 약 815개 (−5개)".
-5. primary_reason에는 ① 어떤 원인(SHAP·트렌드)에 대응하는 조치인지 ② 개선 KPI 수치를 현재 기준값 대비 포함.
-6. why_recommended.tiebreaker_chain은 입력의 tiebreaker_chain_evaluated에서 result가 'tied'가 아닌 단계만 추출하여 그대로 기록. 사용하지 않은 단계는 포함 금지.
-7. why_recommended.explanation에는 사용된 tie-breaker 단계의 구체 수치 포함. 예: "effort 동률(4=4) → release_interval_delta 최소(2.2 < 4.2)로 A 선택".
-8. immediate_actions: 현장에서 지금 바로 실행 가능한 단계. 파라미터 값(예: Release Interval 62.2분), 적용 대상 TG, 순서 포함. 2~4개.
-9. monitoring_kpis: 구조화 객체 — kpi/target/check_after_min. 2~3개.
-10. rollback_condition: 조치를 원복해야 하는 구체적 조건과 수치. 빈 문자열 금지.
-11. caveats에 시뮬레이션 horizon 한계 명시. data_quality 경고가 있을 경우 그 사실도 명시.
-12. 문체: "~입니다"체.
-13. 모든 KPI 수치는 시뮬레이션 예측값임을 명시.
-14. why_not_others와 caveats에서 시스템 내부 코드(SIM_KPI_IDENTICAL, paired_n, composite_score 등)를
+4. 단일 TG는 현재 상태를 기준으로 절대값+변화량 함께 표현합니다. 예: "현재 WIP 820개 → A 적용 시 시뮬상 약 815개 (−5개)".
+5. 복합 TG는 반드시 "현재 → 무대응 2시간 후 → 대응안 2시간 후"를 구분합니다. 대응안 값이 현재보다 높아도 무대응보다 낮으면 "자연 악화를 완화"라고 표현하며 "현재보다 개선"이라고 쓰지 않습니다.
+6. primary_reason에는 ① 어떤 원인(SHAP·트렌드)에 대응하는 조치인지 ② 올바른 비교 기준의 KPI 수치를 포함합니다.
+7. why_recommended.tiebreaker_chain은 입력의 tiebreaker_chain_evaluated에서 result가 'tied'가 아닌 단계만 추출하여 그대로 기록. 사용하지 않은 단계는 포함 금지.
+8. why_recommended.explanation에는 사용된 tie-breaker 단계의 구체 수치 포함. 예: "effort 동률(4=4) → release_interval_delta 최소(2.2 < 4.2)로 A 선택".
+9. immediate_actions: 현장에서 지금 바로 실행 가능한 단계. 파라미터 값(예: Release Interval 62.2분), 적용 대상 TG, 순서 포함. 2~4개.
+10. monitoring_kpis: 구조화 객체 — kpi/target/check_after_min. 2~3개.
+11. rollback_condition: 조치를 원복해야 하는 구체적 조건과 수치. 빈 문자열 금지.
+12. caveats에 시뮬레이션 horizon 한계 명시. data_quality 경고가 있을 경우 그 사실도 명시.
+13. 문체: "~입니다"체.
+14. 모든 KPI 수치는 시뮬레이션 예측값임을 명시.
+15. why_not_others와 caveats에서 시스템 내부 코드(SIM_KPI_IDENTICAL, paired_n, composite_score 등)를
     그대로 노출하지 않는다. 해석된 의미로 표현한다.
     예(금지): "SIM_KPI_IDENTICAL 경고가 있어 paired_n=30으로 mean_delta=0"
     예(허용): "시뮬레이션이 조치 효과를 감지하지 못한 것으로 의심됨 — 파라미터 범위 재검토 필요"
@@ -271,7 +274,12 @@ def _format_candidate_block(c: dict) -> str:
         if param_parts:
             lines.append(f"  파라미터: {' | '.join(param_parts)}")
 
-    lines.append("  KPI 상세 (현재 상태 대비 delta):")
+    comparison_label = (
+        "무대응 2시간 후 대비 delta"
+        if c.get("per_tg_forecasts")
+        else "현재 상태 대비 delta"
+    )
+    lines.append(f"  KPI 상세 ({comparison_label}):")
     for kpi, kc in kpi_contribs.items():
         lines.append(
             f"    - {kpi:22s} Δ={kc.get('mean_delta', 0):+8.3f}  "
@@ -286,6 +294,21 @@ def _format_candidate_block(c: dict) -> str:
             lines.append(
                 f"    - {t['kpi']:22s} Δ={t['mean_delta']:+.3f}  "
                 f"severity={t['severity']}  conf={t['confidence']:.2f}"
+            )
+    per_tg_forecasts = c.get("per_tg_forecasts") or {}
+    if per_tg_forecasts:
+        lines.append("  대상 TG별 현재 → 무대응 2시간 후 → 대응안 2시간 후:")
+        for target_tg, forecast in per_tg_forecasts.items():
+            current = forecast.get("current") or {}
+            no_action = forecast.get("no_action") or {}
+            action = forecast.get("action") or {}
+            lines.append(
+                f"    - {target_tg}: "
+                f"q_time {current.get('q_time_min')}→{no_action.get('q_time_min')}→{action.get('q_time_min')}, "
+                f"WIP {current.get('wip')}→{no_action.get('wip')}→{action.get('wip')}, "
+                f"wait {current.get('wait_ratio')}→{no_action.get('wait_ratio')}→{action.get('wait_ratio')}, "
+                f"util {current.get('utilization_avg')}→{no_action.get('utilization_avg')}→{action.get('utilization_avg')}, "
+                f"avail {current.get('available_tool_ratio')}→{no_action.get('available_tool_ratio')}→{action.get('available_tool_ratio')}"
             )
     return "\n".join(lines)
 
@@ -328,12 +351,31 @@ def _build_user_prompt(
     bn = ci.get("bottleneck_info", {})
     horizon = ci.get("horizon_min", "-")
 
-    current_state_block = (
-        "[ 현재 상태 (기준점 — 대응안 kpi_delta는 이 값 대비 변화량) ]\n"
-        f"  WIP: {bn.get('wip_count', '-')}개  |  평균 대기시간: {bn.get('avg_queue_time_min', '-')}분\n"
-        f"  대기비율: {bn.get('wait_ratio', '-')}  |  가동률: {bn.get('utilization_avg', '-')}\n"
-        f"  가용장비비율: {bn.get('available_tool_ratio', '-')}  |  위험도(composite): {bn.get('risk_score', '-')}"
-    )
+    target_states = ci.get("target_toolgroup_states") or {}
+    if target_states:
+        state_lines = [
+            "[ 대상 TG별 현재 상태와 무대응 2시간 전망 ]",
+            "  대응안 KPI delta는 같은 시점의 무대응 전망 대비 변화량입니다.",
+        ]
+        for target_tg, values in target_states.items():
+            current = values.get("current") or {}
+            no_action = values.get("no_action") or {}
+            state_lines.append(
+                f"  {target_tg}: "
+                f"q_time {current.get('q_time_min')}→{no_action.get('q_time_min')}, "
+                f"WIP {current.get('wip')}→{no_action.get('wip')}, "
+                f"wait {current.get('wait_ratio')}→{no_action.get('wait_ratio')}, "
+                f"util {current.get('utilization_avg')}→{no_action.get('utilization_avg')}, "
+                f"avail {current.get('available_tool_ratio')}→{no_action.get('available_tool_ratio')}"
+            )
+        current_state_block = "\n".join(state_lines)
+    else:
+        current_state_block = (
+            "[ 현재 상태 (기준점 — 대응안 kpi_delta는 이 값 대비 변화량) ]\n"
+            f"  WIP: {bn.get('wip_count', '-')}개  |  평균 대기시간: {bn.get('avg_queue_time_min', '-')}분\n"
+            f"  대기비율: {bn.get('wait_ratio', '-')}  |  가동률: {bn.get('utilization_avg', '-')}\n"
+            f"  가용장비비율: {bn.get('available_tool_ratio', '-')}  |  위험도(composite): {bn.get('risk_score', '-')}"
+        )
 
     context_block = _format_cause_context_block(ci)
     cand_blocks = "\n\n".join(_format_candidate_block(c) for c in candidates)
@@ -389,10 +431,11 @@ def _build_user_prompt(
         f"{base_ctx}\n"
         f"[의사결정 상태] 명확한 1위 — {top_label} composite_score 우위.\n\n"
         "지침:\n"
-        "1) primary_reason에는 원인 분석(SHAP·트렌드)과 대응안 연결 + 개선 KPI를 현재 기준값 대비 절대값으로 인용.\n"
-        "2) why_recommended.selected_by='score', tiebreaker_chain은 빈 리스트.\n"
-        "3) tradeoffs는 악화 KPI를 현재 기준값과 함께 자연어로 표현.\n"
-        f"4) immediate_actions에 {top_label} 적용을 위한 현장 실행 단계 작성 (파라미터 값, 적용 TG, 순서)."
+        "1) primary_reason에는 원인 분석(SHAP·트렌드)과 대응안 연결을 설명합니다.\n"
+        "2) 복합 TG이면 현재·무대응·대응안 값을 구분하고, 무대응 대비 개선을 현재 대비 개선으로 바꾸어 말하지 않습니다.\n"
+        "3) why_recommended.selected_by='score', tiebreaker_chain은 빈 리스트.\n"
+        "4) tradeoffs는 악화 KPI를 올바른 비교 기준과 함께 자연어로 표현.\n"
+        f"5) immediate_actions에 {top_label} 적용을 위한 현장 실행 단계 작성 (파라미터 값, 적용 TG, 순서)."
     )
 
 

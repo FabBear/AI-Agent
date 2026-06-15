@@ -379,6 +379,8 @@ class ActionCandidate(_Base):
     simulation: SimulationStats | None = None
     composite_score: float | None = None
     tradeoffs: list[str] = []
+    comparison_basis: str = ""
+    per_tg_forecasts: dict[str, dict[str, dict[str, float]]] = {}
 
 
 class WhyNotOther(_Base):
@@ -405,7 +407,7 @@ class ImmediateAction(_Base):
 
 class MonitoringCheck(_Base):
     kpi: str
-    target: float | None = None
+    target: float | str | None = None
     unit: str = ""
     check_after_min: int | None = None
 

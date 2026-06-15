@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -83,6 +84,8 @@ def _build_action_candidates(verified_candidates: list[dict]) -> list[dict]:
             "paired_n": vc.get("paired_n", 0),
             "paired_t_p": p_val,
             "plan_meta": vc.get("plan_meta") or {},
+            "per_tg_forecasts": vc.get("per_tg_forecasts") or {},
+            "aggregation_rule": vc.get("aggregation_rule") or "",
         })
     return candidates
 
@@ -210,9 +213,18 @@ def _build_cause_context(toolgroup: str, cause_reports: list) -> dict:
         sim_forecast = (
             sf_raw.model_dump() if sf_raw is not None and hasattr(sf_raw, "model_dump") else sf_raw
         )
+        judgment_raw = _attr(report, "judgment", None)
+        primary_cause_category = ""
+        if judgment_raw is not None:
+            primary_cause_category = (
+                judgment_raw.get("primary_category", "")
+                if isinstance(judgment_raw, dict)
+                else getattr(judgment_raw, "primary_category", "")
+            ) or ""
 
         return {
             "cause_summary": _attr(report, "cause_summary", "") or "",
+            "primary_cause_category": primary_cause_category,
             "shap_top": shap_top,
             "trend_top": trend_top,
             "upstream_suspects": list(_attr(report, "upstream_suspects", []) or [])[:3],
@@ -407,6 +419,39 @@ def _build_kpi_impact(current_state_kpi: dict, kpi_contribs: dict) -> dict:
     return impact
 
 
+def _build_anchor_tg_kpi_impact(
+    per_tg_forecasts: dict,
+    anchor_toolgroup: str,
+    kpi_contribs: dict,
+) -> dict:
+    """복합 TG 표시용 KPI: 평균 없이 anchor TG의 현재 → 대응안 변화만 사용."""
+    forecast = per_tg_forecasts.get(anchor_toolgroup) or next(
+        iter(per_tg_forecasts.values()),
+        {},
+    )
+    current = forecast.get("current") or {}
+    action = forecast.get("action") or {}
+    impact: dict = {}
+    for kpi_name in _KPI_UNITS:
+        now_val = current.get(kpi_name)
+        after = action.get(kpi_name)
+        if not isinstance(now_val, (int, float)) or not isinstance(after, (int, float)):
+            continue
+        delta = float(after) - float(now_val)
+        pct_change = (delta / float(now_val) * 100) if now_val else 0.0
+        contribution = kpi_contribs.get(kpi_name) or {}
+        impact[kpi_name] = {
+            "now": round(float(now_val), 4),
+            "after": round(float(after), 4),
+            "delta": round(delta, 4),
+            "pct_change": round(pct_change, 2),
+            "verdict": contribution.get("verdict", "unknown"),
+            "confidence": round(float(contribution.get("confidence", 0.0)), 4),
+            "ci_width": round(float(contribution.get("ci_width", 0.0)), 4),
+        }
+    return impact
+
+
 def _build_current_state_option(ci: dict, current_state_kpi: dict) -> dict:
     """action_options[0] — 현재 상태 유지 (baseline 옵션)."""
     severity = ci.get("severity", "")
@@ -446,7 +491,12 @@ def _build_current_state_option(ci: dict, current_state_kpi: dict) -> dict:
     }
 
 
-def _build_action_option(c: dict, current_state_kpi: dict, decision_info: dict) -> dict:
+def _build_action_option(
+    c: dict,
+    current_state_kpi: dict,
+    decision_info: dict,
+    anchor_toolgroup: str = "",
+) -> dict:
     """action_options[i] — 후보 1개 (A, B, ...)."""
     from agents.compare_agent.scorer import derive_recommendation_status
 
@@ -454,6 +504,17 @@ def _build_action_option(c: dict, current_state_kpi: dict, decision_info: dict) 
     sb = c.get("score_breakdown") or {}
     pm = c.get("plan_meta") or {}
     rec_meta = derive_recommendation_status(c, decision_info)
+    per_tg_forecasts = c.get("per_tg_forecasts") or {}
+    kpi_contribs = sb.get("kpi_contributions", {})
+    kpi_impact = (
+        _build_anchor_tg_kpi_impact(
+            per_tg_forecasts,
+            anchor_toolgroup,
+            kpi_contribs,
+        )
+        if per_tg_forecasts
+        else _build_kpi_impact(current_state_kpi, kpi_contribs)
+    )
 
     return {
         "label": c["label"],
@@ -461,7 +522,7 @@ def _build_action_option(c: dict, current_state_kpi: dict, decision_info: dict) 
         "description": _summarize_plan_meta(pm) or c.get("description", "")[:60],
         "target_toolgroups": list(pm.get("target_toolgroups", []) or []),
         "params": _option_params(pm),
-        "kpi_impact": _build_kpi_impact(current_state_kpi, sb.get("kpi_contributions", {})),
+        "kpi_impact": kpi_impact,
         "operational": {
             "effort": md.get("effort"),
             "scope": md.get("scope"),
@@ -479,6 +540,13 @@ def _build_action_option(c: dict, current_state_kpi: dict, decision_info: dict) 
         "badge": rec_meta["badge"],
         "is_baseline": False,
         "tradeoffs": c.get("tradeoffs", []),
+        "per_tg_forecasts": per_tg_forecasts,
+        "aggregation_rule": c.get("aggregation_rule") or "",
+        "comparison_basis": (
+            f"{anchor_toolgroup or '대표 TG'} 현재 상태 대비 대응안 2시간 후"
+            if per_tg_forecasts
+            else "현재 상태 대비"
+        ),
     }
 
 
@@ -564,7 +632,267 @@ def _build_data_quality(candidates: list[dict]) -> dict:
 
 # ── HITL 콘솔 출력 ────────────────────────────────────────────────────────────
 
-def _build_hitl_prompt(result: dict) -> str:
+def _build_rag_block(rag_evidence: dict | None) -> list[str]:
+    """MVP HITL용 RAG 요약: 공통 사례, 후보별 판단, 인사이트."""
+    if not rag_evidence:
+        return []
+
+    candidates = rag_evidence.get("candidates") or []
+    common_hits = rag_evidence.get("common_hits") or []
+    reference_hits: list[dict] = []
+    seen_case_ids: set[str] = set()
+    for candidate in candidates:
+        for hit in (candidate.get("candidate_hits") or candidate.get("hits") or [])[:3]:
+            case_id = str(hit.get("case_id") or "")
+            if not case_id or case_id in seen_case_ids:
+                continue
+            reference_hits.append(hit)
+            seen_case_ids.add(case_id)
+            if len(reference_hits) >= 6:
+                break
+        if len(reference_hits) >= 6:
+            break
+    if not reference_hits:
+        reference_hits = list(common_hits[:6])
+    if not candidates or (not reference_hits and not common_hits):
+        return ["", "[ RAG 유사 사례 참고 ]", "  비교 가능한 유사 사례가 없습니다."]
+
+    is_demo = any(
+        "DEMO 합성 데이터" in (hit.get("text") or "")
+        for hit in (reference_hits or common_hits)
+    )
+    heading = "[ RAG 유사 사례 참고 ]"
+    if is_demo:
+        heading = "[ RAG 유사 사례 참고 - DEMO 합성 데이터 ]"
+    lines = ["", heading]
+
+    summary_by_id: dict[str, str] = {}
+    for candidate in candidates:
+        evidence = candidate.get("evidence") or {}
+        for case in evidence.get("case_summaries", []):
+            case_id = str(case.get("case_id", ""))
+            if case_id and case_id not in summary_by_id:
+                summary_by_id[case_id] = case.get("summary", "")
+
+    _label_ko = {"conservative": "보수안", "standard": "표준안", "aggressive": "강화안"}
+
+    def _extract_label(title: str) -> str:
+        m = re.search(r'\b(conservative|standard|aggressive)\b', title, re.IGNORECASE)
+        return m.group(1).lower() if m else ""
+
+    def _outcome_sentence(summary: str) -> str:
+        parts = [s.strip().rstrip(".") for s in summary.split(". ") if len(s.strip()) > 10]
+        if len(parts) >= 2:
+            return f"{parts[-2]} → {parts[-1]}"
+        return parts[-1] if parts else summary[:150]
+
+    def _format_candidate_refs(candidate: dict) -> str:
+        refs: list[str] = []
+        for hit in (candidate.get("candidate_hits") or candidate.get("hits") or [])[:2]:
+            case_id = str(hit.get("case_id", "")).strip()
+            if case_id and case_id not in refs:
+                refs.append(case_id)
+        if refs:
+            return "검색 사례: " + ", ".join(refs)
+
+        evidence = candidate.get("evidence") or {}
+        claim_ids: list[str] = []
+        for claim in evidence.get("claims", [])[:2]:
+            for case_id in claim.get("case_ids", [])[:2]:
+                case_id = str(case_id).strip()
+                if case_id and case_id not in claim_ids:
+                    claim_ids.append(case_id)
+        if claim_ids:
+            return "근거 사례: " + ", ".join(claim_ids)
+        return "근거 사례: 없음"
+
+    top_hits = (reference_hits or common_hits)[:6]
+    tg_codes = [h.get("tg_code", "") for h in top_hits]
+    all_same_tg = len(set(tg_codes)) == 1 and bool(tg_codes[0])
+
+    if all_same_tg:
+        tg = tg_codes[0]
+        cause = (top_hits[0].get("bottleneck_cause_type") or "").strip()
+        group_header = f"  ▸ {tg} {cause} 복합 대응 참조 사례" if cause else f"  ▸ {tg} 복합 대응 참조 사례"
+        lines.append(group_header)
+        for hit in top_hits:
+            case_id = str(hit.get("case_id", "")).strip()
+            outcome = _outcome_sentence(hit.get("cause_summary") or "")
+            source = hit.get("report_url") or hit.get("source_path") or ""
+            source_tag = f" [보기: {source}]" if source else ""
+            lines.append(f"    {outcome}{source_tag}")
+            if case_id:
+                lines.append(f"      근거 사례: {case_id}")
+    else:
+        for hit in top_hits:
+            case_id = str(hit.get("case_id", ""))
+            summary = hit.get("cause_summary") or summary_by_id.get(case_id, "")
+            title = hit.get("report_title") or case_id
+            source = hit.get("report_url") or hit.get("source_path")
+            lines.append(f"  - {summary}")
+            lines.append(
+                f"    근거: {title}" + (f" [보기: {source}]" if source else "")
+            )
+            if case_id:
+                lines.append(f"    근거 사례: {case_id}")
+
+    effect_labels = {
+        "high": "높음",
+        "medium": "보통",
+        "low": "낮음",
+        "unknown": "판단 불가",
+    }
+    risk_labels = {
+        "high": "높음",
+        "medium": "보통",
+        "low": "낮음",
+        "unknown": "판단 불가",
+    }
+    lines += ["", "  ▸ 대응안별 사례 비교"]
+    for candidate in candidates:
+        label = candidate.get("label", "?")
+        evidence = candidate.get("evidence")
+        if not evidence:
+            lines.append(f"    {label}: 비교 가능한 사례 부족")
+            continue
+        lines.append(
+            f"    {label}: "
+            f"효과 {effect_labels.get(evidence.get('effect_outlook'), '판단 불가')} · "
+            f"리스크 {risk_labels.get(evidence.get('risk_level'), '판단 불가')}"
+        )
+        summary = evidence.get("candidate_summary")
+        if summary:
+            lines.append(f"      {summary}")
+        lines.append(f"      {_format_candidate_refs(candidate)}")
+
+    comparison = rag_evidence.get("comparison") or {}
+    insight = comparison.get("rag_summary") or comparison.get("overall_comment")
+    if insight:
+        lines += ["", "[ RAG 인사이트 ]", f"  {insight}"]
+    return lines
+
+
+def _build_rag_statistical_summary(ci: dict) -> str:
+    """RAG 인사이트에 전달할 120분 통계 요약."""
+    decision = ci.get("decision_info") or {}
+    status = decision.get("decision_status", "")
+    status_text = {
+        "clear_winner": "후보 간 점수 우위가 확인됨",
+        "equivalent_candidates": "후보 간 우위가 뚜렷하지 않음",
+        "no_meaningful_effect": "의미 있는 개선 효과를 확인하지 못함",
+    }.get(status, "판정이 명확하지 않음")
+    lines = [f"120분 paired 검증: {status_text}."]
+    for candidate in ci.get("action_candidates", []):
+        contributions = (
+            (candidate.get("score_breakdown") or {}).get("kpi_contributions")
+            or {}
+        )
+        kpi_text = ", ".join(
+            f"{kpi} Δ{float((contributions.get(kpi) or {}).get('mean_delta', 0.0)):+.4f}"
+            f"({(contributions.get(kpi) or {}).get('verdict', 'unknown')})"
+            for kpi in (
+                "q_time_min",
+                "wip",
+                "wait_ratio",
+                "utilization_avg",
+                "available_tool_ratio",
+            )
+        )
+        lines.append(
+            f"{candidate.get('label', '?')}: "
+            f"score {float(candidate.get('composite_score', 0.0)):.3f}, "
+            f"{kpi_text}"
+        )
+    return "\n".join(lines)
+
+
+def _sanitize_candidate_evidence(
+    evidence: dict | None,
+    hits: list[dict],
+) -> dict | None:
+    if not evidence:
+        return None
+    allowed_ids = {
+        str(hit.get("case_id"))
+        for hit in hits
+        if hit.get("case_id")
+    }
+    sanitized = dict(evidence)
+    sanitized["case_summaries"] = [
+        case
+        for case in evidence.get("case_summaries", [])
+        if str(case.get("case_id")) in allowed_ids
+    ][:6]
+    sanitized["claims"] = [
+        {
+            **claim,
+            "case_ids": [
+                str(case_id)
+                for case_id in claim.get("case_ids", [])
+                if str(case_id) in allowed_ids
+            ],
+        }
+        for claim in evidence.get("claims", [])[:3]
+        if any(
+            str(case_id) in allowed_ids
+            for case_id in claim.get("case_ids", [])
+        )
+    ]
+    return sanitized
+
+
+def _sanitize_rag_comparison(
+    comparison: dict | None,
+    candidates: list[dict],
+) -> dict | None:
+    if not comparison:
+        return None
+    allowed_labels = {
+        str(candidate.get("label"))
+        for candidate in candidates
+    }
+    allowed_case_ids = {
+        str(hit.get("case_id"))
+        for candidate in candidates
+        for hit in candidate.get("hits", [])
+        if hit.get("case_id")
+    }
+    ranking = []
+    for item in comparison.get("ranking", []):
+        if str(item.get("label")) not in allowed_labels:
+            continue
+        ranking.append({
+            **item,
+            "case_ids": [
+                str(case_id)
+                for case_id in item.get("case_ids", [])
+                if str(case_id) in allowed_case_ids
+            ],
+        })
+    return {**comparison, "ranking": ranking}
+
+
+def _fallback_rag_comparison(candidates: list[dict]) -> dict | None:
+    summaries = [
+        f"{candidate.get('label')}: "
+        f"{(candidate.get('evidence') or {}).get('candidate_summary', '')}"
+        for candidate in candidates
+        if candidate.get("evidence")
+    ]
+    if not summaries:
+        return None
+    return {
+        "ranking_status": "insufficient",
+        "ranking": [],
+        "rag_summary": " ".join(summaries),
+        "overall_comment": "RAG는 과거 사례 참고 정보이며 통계 점수와 합산하지 않습니다.",
+    }
+
+
+def _build_hitl_prompt(
+    result: dict,
+    rag_evidence: dict | None = None,
+) -> str:
     """compare/2.0 result → HITL 콘솔 텍스트."""
     meta = result["meta"]
     cs = result["current_state"]
@@ -589,7 +917,6 @@ def _build_hitl_prompt(result: dict) -> str:
     if dm.get("decision_caveat"):
         lines.append(f"  {dm['decision_caveat']}")
 
-    # 현재 상태
     lines += ["", "[ 현재 상태 (기준점) ]"]
     for k, info in cs.get("kpi", {}).items():
         lines.append(f"  {k:24s} {info['value']} {info.get('unit', '')}")
@@ -678,8 +1005,29 @@ def _build_hitl_prompt(result: dict) -> str:
             f"WIP Δ{wip_impact.get('delta', 0):+.1f}  "
             f"신뢰도 {conf_disp}"
         )
+        for target_tg, forecast in (opt.get("per_tg_forecasts") or {}).items():
+            current = forecast.get("current") or {}
+            action = forecast.get("action") or current
+            lines.append(f"    └ {target_tg}")
+            lines.append(
+                f"       q_time {current.get('q_time_min', '-')}→{action.get('q_time_min', '-')}분  "
+                f"WIP {current.get('wip', '-')}→{action.get('wip', '-')}  "
+                f"wait {current.get('wait_ratio', '-')}→{action.get('wait_ratio', '-')}"
+            )
+            lines.append(
+                f"       util {current.get('utilization_avg', '-')}→{action.get('utilization_avg', '-')}  "
+                f"avail {current.get('available_tool_ratio', '-')}→{action.get('available_tool_ratio', '-')}"
+            )
 
-    lines += ["", "승인할 대응안을 입력하세요 (현재상태 / A / B / C / 반려): ", ""]
+    lines += _build_rag_block(rag_evidence)
+
+    choices = " / ".join(
+        [
+            *(str(option.get("label")) for option in options if option.get("label")),
+            "반려",
+        ]
+    )
+    lines += ["", f"승인할 대응안을 입력하세요 ({choices}): ", ""]
     return "\n".join(lines)
 
 
@@ -722,6 +1070,16 @@ def compare_rank(state: "PipelineState") -> dict:
                 all_verified.extend(g.get("verified_candidates", []))
             candidates = _build_action_candidates(all_verified)
             candidates, scored, decision_info = _rank_candidates(candidates)
+            first_forecasts = (
+                candidates[0].get("per_tg_forecasts") if candidates else {}
+            ) or {}
+            target_toolgroup_states = {
+                target_tg: {
+                    "current": forecast.get("current") or {},
+                    "no_action": forecast.get("no_action") or {},
+                }
+                for target_tg, forecast in first_forecasts.items()
+            }
             compare_inputs.append({
                 "toolgroup": anchor_tg,
                 "process_name": "글로벌 플랜 A/B",
@@ -739,6 +1097,12 @@ def compare_rank(state: "PipelineState") -> dict:
                 "action_candidates": candidates,
                 "scored_actions": scored,
                 "decision_info": decision_info,
+                "target_toolgroup_states": target_toolgroup_states,
+                "comparison_basis": (
+                    "대응안 2시간 후와 무대응 2시간 후의 차이"
+                    if target_toolgroup_states
+                    else "현재 상태 대비 대응안 변화"
+                ),
             })
 
     _log.info(f"[Compare] rank 완료 — {len(compare_inputs)}개 공정")
@@ -792,20 +1156,46 @@ def compare_llm(state: "PipelineState") -> dict:
         current_state = _build_current_state_block(ci)
         cause = _build_cause_block(ci)
         cascade = _build_cascade_block(ci)
-        action_options = [_build_current_state_option(ci, current_state["kpi"])]
+        baseline_option = _build_current_state_option(ci, current_state["kpi"])
+        target_states = ci.get("target_toolgroup_states") or {}
+        if target_states:
+            baseline_option["per_tg_forecasts"] = {
+                target_tg: {
+                    "current": values.get("current") or {},
+                    "no_action": values.get("no_action") or {},
+                    "action": values.get("no_action") or {},
+                }
+                for target_tg, values in target_states.items()
+            }
+        action_options = [baseline_option]
         scored_map = {
             s["label"]: s
             for s in ci.get("scored_actions", [])
             if isinstance(s, dict) and s.get("label")
         }
         for c in candidates:
-            opt = _build_action_option(c, current_state["kpi"], decision_info)
+            opt = _build_action_option(
+                c,
+                current_state["kpi"],
+                decision_info,
+                anchor_toolgroup=ci.get("anchor_toolgroup") or tg,
+            )
             scored = scored_map.get(c["label"], {})
             if scored.get("badge") and not opt.get("badge"):
                 opt["badge"] = scored["badge"]
             action_options.append(opt)
         recommendation = _build_recommendation_block(recommendation_obj, decision_info, top_candidate)
         decision_meta = _build_decision_meta(decision_info)
+
+        rag_context = state.get("rag_context") or []
+        rag_evidence = next(
+            (
+                item
+                for item in rag_context
+                if item.get("toolgroup") == tg
+            ),
+            None,
+        )
 
         result_v2 = {
             "meta": meta,
@@ -816,9 +1206,20 @@ def compare_llm(state: "PipelineState") -> dict:
             "recommendation": recommendation,
             "decision_meta": decision_meta,
             "data_quality": data_quality,
+            "rag_evidence": rag_evidence,
+            "target_toolgroup_states": ci.get("target_toolgroup_states") or {},
+            "comparison_basis": ci.get("comparison_basis") or "",
         }
+        COMPARE_OUT_DIR.mkdir(parents=True, exist_ok=True)
+        (COMPARE_OUT_DIR / f"compare_debug_{tg}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json").write_text(
+            json.dumps(result_v2, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
-        hitl_prompt = _build_hitl_prompt(result_v2)
+        hitl_prompt = _build_hitl_prompt(
+            result_v2,
+            rag_evidence=rag_evidence,
+        )
 
         compare_formatted.append({
             "toolgroup": tg,
@@ -831,6 +1232,228 @@ def compare_llm(state: "PipelineState") -> dict:
         _log.info(f"[Compare] {tg} 포맷 완료")
 
     return {"compare_formatted": compare_formatted}
+
+
+def compare_rag(state: "PipelineState") -> dict:
+    """TG와 원인으로 공통 사례를 찾고 후보별 효과·리스크를 비교한다."""
+    from agents.compare_agent.rag_evaluator import (
+        build_action_profile,
+        build_plan_description,
+        build_plan_query,
+        compare_candidate_evidence,
+        evaluate_candidate_evidence,
+    )
+    from agents.logger import get_logger
+    from app.services.qdrant_case_service import QdrantCaseService
+
+    log = get_logger(__name__)
+    compare_inputs = state.get("compare_inputs", [])
+    if not compare_inputs:
+        return {"rag_context": []}
+
+    try:
+        qdrant = QdrantCaseService()
+    except Exception:
+        log.exception("[RAG] Qdrant 초기화 실패")
+        return {"rag_context": []}
+
+    def _candidate_family(candidate: dict) -> str:
+        profile = build_action_profile(candidate)
+        interval = float(profile.get("interval_pct") or 0.0)
+        has_priority = bool(profile.get("has_priority"))
+        has_superhotlot = bool(profile.get("has_superhotlot"))
+        desc = f"{candidate.get('description', '')} {build_plan_description(candidate)}".lower()
+        if has_superhotlot or "aggressive" in desc or interval >= 28:
+            return "aggressive"
+        if has_priority and interval >= 20:
+            return "standard"
+        if interval <= 16 and not has_priority and not has_superhotlot:
+            return "conservative"
+        return "unknown"
+
+    def _score_hit(candidate: dict, hit: dict) -> tuple[float, float]:
+        family = _candidate_family(candidate)
+        text = " ".join([
+            str(hit.get("report_title", "")),
+            str(hit.get("source_path", "")),
+            str(hit.get("cause_summary", "")),
+            str(hit.get("text", "")),
+        ]).lower()
+        q_score = float(hit.get("score", 0.0) or 0.0)
+        boost = 0.0
+
+        def has(*terms: str) -> bool:
+            return any(term.lower() in text for term in terms)
+
+        if family == "aggressive":
+            if has("aggressive"):
+                boost += 100.0
+            if has("+28%", "28%"):
+                boost += 60.0
+            if has("superhotlot", "shl"):
+                boost += 50.0
+            if has("priority 30"):
+                boost += 20.0
+        elif family == "standard":
+            if has("standard"):
+                boost += 100.0
+            if has("+22%", "+23%", "22%", "23%"):
+                boost += 60.0
+            if has("priority 20"):
+                boost += 30.0
+            if has("superhotlot 없음", "superhotlot 없", "superhotlot 없음", "없음"):
+                boost += 20.0
+        elif family == "conservative":
+            if has("conservative"):
+                boost += 100.0
+            if has("+16%", "16%"):
+                boost += 60.0
+            if has("우선순위 없음", "priority 없음", "priority 없음", "priority none"):
+                boost += 30.0
+            if has("superhotlot 없음", "superhotlot 없", "없음"):
+                boost += 20.0
+
+        # 같은 TG/원인 사례가 있으면 소폭 보너스
+        if str(hit.get("tg_code", "")) == str(candidate.get("toolgroup", "")):
+            boost += 10.0
+        if str(hit.get("bottleneck_cause_type", "")) and str(hit.get("bottleneck_cause_type", "")) in text:
+            boost += 5.0
+
+        return (boost, q_score)
+
+    def _rank_hits(candidate: dict, hits: list[dict]) -> list[dict]:
+        ranked = sorted(
+            hits,
+            key=lambda hit: _score_hit(candidate, hit),
+            reverse=True,
+        )
+        return ranked
+
+    cause_reports = state.get("cause_reports", [])
+    kpi_snapshot = state.get("kpi_snapshot", [])
+    kpi_map = {k.toolgroup: k for k in kpi_snapshot}
+
+    rag_context: list[dict] = []
+    for ci in compare_inputs:
+        tg = ci.get("toolgroup", "")
+        cause = ci.get("cause_context") or {}
+        bottleneck = ci.get("bottleneck_info") or {}
+        target_tgs: list[str] = ci.get("target_toolgroups") or [tg]
+
+        all_tg_contexts = {
+            t: _build_cause_context(t, cause_reports)
+            for t in target_tgs
+        }
+
+        if len(target_tgs) > 1:
+            # 복합 TG: 모든 TG를 함께 묘사하는 단일 통합 쿼리
+            tg_lines = []
+            for t in target_tgs:
+                ctx = all_tg_contexts.get(t, {})
+                kpi = kpi_map.get(t)
+                tg_lines.append(
+                    f"툴그룹: {t}, 원인: {ctx.get('primary_cause_category', '')}, "
+                    f"원인 요약: {ctx.get('cause_summary', '')}, "
+                    f"WIP: {int(kpi.wip) if kpi else 0}, "
+                    f"대기: {round(kpi.q_time_min, 1) if kpi else 0}분"
+                )
+            common_query = "복합 병목 동시 대응\n" + "\n".join(tg_lines)
+            common_hits = qdrant.search_similar(
+                common_query,
+                top_k=10,
+                min_score=0.55,
+                cause_type_filter=None,
+                tg_filter=None,
+            )
+            current_state = " | ".join(
+                f"툴그룹 {t}(원인: {all_tg_contexts.get(t, {}).get('primary_cause_category', '')}), "
+                f"WIP {int(kpi_map.get(t).wip) if kpi_map.get(t) else 0}, "
+                f"대기 {round(kpi_map.get(t).q_time_min, 1) if kpi_map.get(t) else 0}분"
+                for t in target_tgs
+            )
+        else:
+            # 단일 TG: 기존 로직
+            common_query = (
+                f"툴그룹: {tg}\n"
+                f"원인 유형: {cause.get('primary_cause_category', '')}\n"
+                f"원인 요약: {cause.get('cause_summary', '')}\n"
+                f"현재 상태: WIP {bottleneck.get('wip_count', 0)}, "
+                f"대기 {bottleneck.get('avg_queue_time_min', 0)}분, "
+                f"이용률 {bottleneck.get('utilization_avg', 0)}"
+            )
+            common_hits = qdrant.search_similar(
+                common_query,
+                top_k=10,
+                min_score=0.55,
+                cause_type_filter=(
+                    cause.get("primary_cause_category") or None
+                ),
+                tg_filter=tg or None,
+            )
+            current_state = (
+                f"툴그룹 {tg}, 원인 {cause.get('cause_summary', '')}, "
+                f"WIP {bottleneck.get('wip_count', 0)}, "
+                f"대기 {bottleneck.get('avg_queue_time_min', 0)}분"
+            )
+
+        shared_hits = common_hits
+        candidates_rag: list[dict] = []
+        for candidate in ci.get("action_candidates", []):
+            profile = build_action_profile(candidate)
+            plan_description = build_plan_description(candidate)
+            candidate_query = build_plan_query(ci, candidate)
+            cause_filter = cause.get("primary_cause_category") or None
+            tg_filter = tg or None if len(target_tgs) == 1 else None
+            candidate_hits = qdrant.search_similar(
+                candidate_query,
+                top_k=10,
+                min_score=0.55,
+                cause_type_filter=cause_filter if len(target_tgs) == 1 else None,
+                tg_filter=tg_filter,
+            )
+            candidate_hits = _rank_hits(candidate, candidate_hits)
+            hits_for_candidate = candidate_hits or common_hits
+            evidence = None
+            if hits_for_candidate:
+                result = evaluate_candidate_evidence(
+                    plan_description=plan_description,
+                    current_state_summary=current_state,
+                    hits=hits_for_candidate,
+                    llm=_get_llm(),
+                    action_profile=profile,
+                )
+                evidence = _sanitize_candidate_evidence(
+                    result.model_dump() if result else None,
+                    hits_for_candidate,
+                )
+            candidates_rag.append({
+                "label": candidate.get("label", "?"),
+                "profile": profile,
+                "plan_description": plan_description,
+                "hits": hits_for_candidate,
+                "shared_hits": common_hits,
+                "candidate_hits": candidate_hits,
+                "family": _candidate_family(candidate),
+                "evidence": evidence,
+            })
+
+        comparison_result = compare_candidate_evidence(
+            candidate_evidence=candidates_rag,
+            statistical_summary=_build_rag_statistical_summary(ci),
+            llm=_get_llm(),
+            current_context=current_state,
+        )
+        comparison = _sanitize_rag_comparison(
+            comparison_result.model_dump() if comparison_result else None,
+            candidates_rag,
+        ) or _fallback_rag_comparison(candidates_rag)
+        rag_context.append({
+            "toolgroup": tg,
+            "common_hits": common_hits,
+            "candidates": candidates_rag,
+            "comparison": comparison,
+        })
+    return {"rag_context": rag_context}
 
 
 def compare_hitl(state: "PipelineState") -> dict:
@@ -856,7 +1479,7 @@ def compare_hitl(state: "PipelineState") -> dict:
 # ── HITL 모드별 구현 ──────────────────────────────────────────────────────────
 
 def _hitl_webhook(state: "PipelineState", compare_formatted: list[dict], _log) -> dict:
-    """Webhook 모드: 상태 직렬화 → hitl_pending/ 저장 → Phase 1 종료."""
+    """Webhook 모드: 상태 직렬화 → hitl_pending/ 저장 → HITL 승인 대기."""
     import uuid as _uuid
     from datetime import datetime as _dt, timezone as _tz
 
@@ -883,17 +1506,17 @@ def _hitl_webhook(state: "PipelineState", compare_formatted: list[dict], _log) -
     _notify_spring_boot(hitl_token, compare_formatted, _log)
 
     print(f"\n{'='*60}")
-    print(f"[Phase 1 완료] HITL 대기 중")
+    print(f"[분석 완료 — HITL 대기 중]")
     print(f"  token : {hitl_token}")
     print(f"  파일  : {pending_path}")
-    print(f"  Phase 2 실행: python run_phase2.py --token {hitl_token}")
+    print(f"  보고서 생성: python run_report.py --token {hitl_token}")
     print(f"{'='*60}\n")
 
     return {"compare_results": [], "hitl_approved": None, "hitl_token": hitl_token}
 
 
 def _notify_spring_boot(hitl_token: str, compare_formatted: list[dict], _log) -> None:
-    """Spring Boot에 HITL 대기 요청 전송 (실패해도 Phase 1 계속 진행).
+    """Spring Boot에 HITL 대기 요청 전송 (실패해도 분석 파이프라인 계속 진행).
 
     compare/2.0 스키마 그대로 송신. Spring Boot 매핑은 별도 작업.
     """
@@ -932,9 +1555,9 @@ def _notify_spring_boot(hitl_token: str, compare_formatted: list[dict], _log) ->
         with _req.urlopen(request, timeout=10) as resp:
             _log.info(f"[HITL-Webhook] Spring Boot 등록 완료: HTTP {resp.status}")
     except _err.HTTPError as e:
-        _log.warning(f"[HITL-Webhook] Spring Boot 등록 실패: HTTP {e.code} — Phase 1은 계속 진행")
+        _log.warning(f"[HITL-Webhook] Spring Boot 등록 실패: HTTP {e.code} — 분석 파이프라인은 계속 진행")
     except Exception as e:
-        _log.warning(f"[HITL-Webhook] Spring Boot 연결 실패: {e} — Phase 1은 계속 진행")
+        _log.warning(f"[HITL-Webhook] Spring Boot 연결 실패: {e} — 분석 파이프라인은 계속 진행")
 
 
 def _hitl_auto(compare_formatted: list[dict], _log) -> dict:

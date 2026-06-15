@@ -723,6 +723,21 @@ def _build_candidate(opt: dict, approved_label: str | None) -> ActionCandidate:
 
     sim = opt.get("simulation") or {}
     op = opt.get("operational") or {}
+    tradeoffs = []
+    for tradeoff in opt.get("tradeoffs") or []:
+        if isinstance(tradeoff, str):
+            tradeoffs.append(tradeoff)
+            continue
+        if isinstance(tradeoff, dict):
+            kpi = tradeoff.get("kpi", "KPI")
+            delta = _round(tradeoff.get("mean_delta"), 4)
+            severity = tradeoff.get("severity", "")
+            tradeoffs.append(
+                f"{kpi} 악화"
+                + (f" (Δ{delta:+g})" if delta is not None else "")
+                + (f", {severity}" if severity else "")
+            )
+
     return ActionCandidate(
         label=label,
         kind=str(opt.get("kind") or "UNKNOWN"),
@@ -743,7 +758,9 @@ def _build_candidate(opt: dict, approved_label: str | None) -> ActionCandidate:
             verdict=sim.get("verdict"),
         ) if sim else None,
         composite_score=_round(opt.get("composite_score"), 4),
-        tradeoffs=list(opt.get("tradeoffs") or []),
+        tradeoffs=tradeoffs,
+        comparison_basis=str(opt.get("comparison_basis") or ""),
+        per_tg_forecasts=dict(opt.get("per_tg_forecasts") or {}),
     )
 
 
@@ -795,10 +812,20 @@ def _build_playbook(rec: dict) -> Playbook:
         if not isinstance(m, dict):
             continue
         kpi_name = str(m.get("kpi", ""))
+        raw_target = m.get("target")
+        target = (
+            _round(raw_target, 4)
+            if isinstance(raw_target, (int, float))
+            else str(raw_target or "")
+        )
         checks.append(MonitoringCheck(
             kpi=kpi_name,
-            target=_round(m.get("target"), 4),
-            unit=_KPI_UNITS.get(kpi_name, ""),
+            target=target,
+            unit=(
+                _KPI_UNITS.get(kpi_name, "")
+                if isinstance(raw_target, (int, float))
+                else ""
+            ),
             check_after_min=_safe_int(m.get("check_after_min")),
         ))
 

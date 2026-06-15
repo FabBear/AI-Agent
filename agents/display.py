@@ -233,6 +233,88 @@ def print_solutions(solutions: list[dict]) -> None:
         print("─" * 70)
 
 
+def print_verification_results(results: list[dict]) -> None:
+    """120분 paired 검증 결과를 후보별 5개 KPI로 표시한다."""
+    if not results:
+        return
+
+    labels = {
+        "conservative": "보수적",
+        "standard": "표준",
+        "aggressive": "강화",
+    }
+    verdict_labels = {
+        "improved": "개선",
+        "worsened": "악화",
+        "unchanged": "변화 없음",
+        "unknown": "판단 불가",
+    }
+    kpi_labels = {
+        "q_time_min": "대기시간",
+        "wip": "WIP",
+        "wait_ratio": "대기비율",
+        "utilization_avg": "이용률",
+        "available_tool_ratio": "가용장비비율",
+    }
+
+    print("=" * 70)
+    print("  대응안 효과 검증")
+    print("=" * 70)
+    if any(result.get("demo_mock") for result in results):
+        print("  ※ DEMO 합성 데이터: 실제 시뮬레이션 결과가 아닙니다.")
+
+    for result in results:
+        for candidate in result.get("verified_candidates", []):
+            label = candidate.get("label", "-")
+            paired_n = candidate.get("paired_n", 0)
+            verdict = candidate.get("verdict", "unknown")
+            print(f"\n  [{labels.get(label, label)} ({label})]")
+            print(
+                f"    통계 검정(120min ×{paired_n}): "
+                f"{verdict_labels.get(verdict, verdict)}"
+            )
+            if candidate.get("aggregation_rule"):
+                print(f"    종합 기준: {candidate['aggregation_rule']}")
+            print(
+                f"    {'지표':<20} {'검정 변화':>12}  "
+                f"{'p-value':>9}  {'판정':>10}"
+            )
+            print(f"    {'─' * 56}")
+            stats = candidate.get("kpi_stats", {})
+            for kpi in (
+                "q_time_min",
+                "wip",
+                "wait_ratio",
+                "utilization_avg",
+                "available_tool_ratio",
+            ):
+                item = stats.get(kpi, {})
+                delta = float(item.get("mean_delta", 0.0) or 0.0)
+                p_value = item.get("paired_t_p")
+                p_text = f"{float(p_value):.3f}" if p_value is not None else "-"
+                item_verdict = item.get("verdict", "unknown")
+                print(
+                    f"    {kpi_labels[kpi]:<20} {delta:>+12.4f}  "
+                    f"{p_text:>9}  "
+                    f"{verdict_labels.get(item_verdict, item_verdict):>10}"
+                )
+            per_tg_forecasts = candidate.get("per_tg_forecasts") or {}
+            if per_tg_forecasts:
+                print("    TG별 현재 → 대응안 2h")
+                for target_tg, forecast in per_tg_forecasts.items():
+                    current = forecast.get("current") or {}
+                    action = forecast.get("action") or {}
+                    print(
+                        f"      {target_tg}: "
+                        f"q {current.get('q_time_min')}→{action.get('q_time_min')}분, "
+                        f"WIP {current.get('wip')}→{action.get('wip')}, "
+                        f"wait {current.get('wait_ratio')}→{action.get('wait_ratio')}, "
+                        f"util {current.get('utilization_avg')}→{action.get('utilization_avg')}, "
+                        f"avail {current.get('available_tool_ratio')}→{action.get('available_tool_ratio')}"
+                    )
+    print("─" * 70)
+
+
 def print_report_results(report_results: list[dict]) -> None:
     if not report_results:
         return

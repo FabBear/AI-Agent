@@ -5,6 +5,8 @@ GlobalSolutionPlan 또는 per-TG SolutionCandidate 각각에 대해 WHATIF 시�
 
 from __future__ import annotations
 
+import os
+
 from agents.logger import get_logger
 from agents.schemas.alert import BottleneckAlert, SeverityLevel
 from agents.schemas.solution import GlobalCompositeCandidate, GlobalSolutionPlan, SolutionCandidate
@@ -288,6 +290,24 @@ def verify_solutions(state: PipelineState) -> PipelineState:
     alerts = state["alerts"]
     kpi_snapshot = state["kpi_snapshot"]
     t0 = kpi_snapshot[0].snapshot_time if kpi_snapshot else 0.0
+
+    if os.environ.get("DEMO_MOCK_VERIFICATION", "").lower() in (
+        "1", "true", "yes",
+    ):
+        from demo.verification_data import (
+            build_demo_verification_results,
+        )
+
+        _log.info(
+            "[Verify] DEMO 목 통계 사용"
+        )
+        return {
+            **state,
+            "verification_results": build_demo_verification_results(
+                solution_candidates,
+                t0,
+            ),
+        }
 
     baseline_id = find_baseline_scenario(t0)
     if baseline_id is None:

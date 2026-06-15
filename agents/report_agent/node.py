@@ -28,7 +28,7 @@ REPORTS_DIR = _ROOT / "report_agent_out"
 def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, kpi_map: dict | None = None, detected_at: str = "") -> dict:
     """compare_result + PipelineState 데이터 → report_draft 초기 항목.
 
-    compare_result는 Phase 1/Phase 2 경로에 따라 shape이 다르다.
+    compare_result는 일체형/Webhook 경로에 따라 shape이 다르다.
     adapter.normalize_compare_result로 한 번 정규화한 뒤 사용한다.
     """
     tg = compare_result["toolgroup"]
@@ -328,6 +328,7 @@ def report_prepare(state: "PipelineState") -> dict:
         )
         # ReportV2 객체 자체를 부착 — 직렬화는 저장 시점에 한 번만.
         item["report_v2"] = report_v2
+        item["rag_evidence"] = (cr.get("result_v2") or {}).get("rag_evidence")
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         sev = item["severity"]
@@ -392,7 +393,7 @@ def report_summary(state: "PipelineState") -> dict:
         try:
             historical = state.get("historical_context")
             narration = narrate_with_reflection(rv2, historical=historical)
-            sections = render_sections(rv2, narration)
+            sections = render_sections(rv2, narration, rag_evidence=item.get("rag_evidence"))
             item["section_summary"]   = sections["summary"]
             item["section_diffusion"] = sections["diffusion"]
             item["section_cause"]     = sections["cause"]
@@ -475,6 +476,9 @@ def report_save(state: "PipelineState") -> dict:
             report_v2.rendered.markdown  = final_report
 
             v2_payload = report_v2.model_dump(mode="json")
+            rag_ev = item.get("rag_evidence")
+            if rag_ev:
+                v2_payload["rag_evidence"] = rag_ev
         else:
             v2_payload = None
 
