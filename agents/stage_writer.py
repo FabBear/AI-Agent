@@ -133,6 +133,44 @@ def emit_stage2(state: PipelineState) -> PipelineState:
                 "dismissed_reason": j.dismissed_reason,
             }
 
+        # G* 통계 검정 결과
+        g_star = None
+        if r.consensus:
+            con = r.consensus
+            sig_kpis = [
+                {
+                    "kpi": k.kpi,
+                    "delta_mean": round(float(k.delta_mean), 4),
+                    "t_p_adj": round(float(k.t_p_adj), 4),
+                    "significant": k.significant,
+                }
+                for k in (con.g_star_sig_kpis or [])
+            ]
+            g_star = {
+                "confirmed": con.g_star_confirmed,
+                "proba": round(float(con.g_star_proba or 0.0), 4),
+                "sig_kpis": sig_kpis,
+            }
+
+        # 시뮬 예측 (1200min forward sim)
+        sim_forecast = None
+        if r.sim_forecast:
+            sf = r.sim_forecast
+            sim_forecast = {
+                "t0": sf.t0,
+                "t_future": sf.t_future,
+                "gets_worse": sf.gets_worse,
+                "kpi_delta": {
+                    k: {
+                        "now": round(float(v.now), 4),
+                        "future": round(float(v.future), 4),
+                        "delta": round(float(v.delta), 4),
+                        "pct_change": round(float(v.pct_change), 2),
+                    }
+                    for k, v in sf.kpi_delta.items()
+                },
+            }
+
         cause_json.append({
             "toolgroup": r.toolgroup,
             "snapshot_time": r.snapshot_time,
@@ -141,6 +179,8 @@ def emit_stage2(state: PipelineState) -> PipelineState:
             "shap_top": shap_top,
             "trend_top": trend_top,
             "upstream_suspects": list(r.upstream_suspects or []),
+            "g_star": g_star,
+            "sim_forecast": sim_forecast,
             "cause_summary": r.cause_summary or "",
         })
 
