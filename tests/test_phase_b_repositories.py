@@ -1,9 +1,11 @@
+import json
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
+from app.repositories.action_plan_repository import ActionPlanRepository
 from app.repositories.agent_step_repository import AgentStepRepository
 from app.repositories.tg_metrics_repository import TgMetricsRepository
 
@@ -44,3 +46,20 @@ async def test_agent_step_repository_uses_ddl_step_name() -> None:
     args = pool.execute.await_args.args
     assert args[2] == "CAUSE_ANALYSIS"
     assert args[3] == "원인 분석 완료"
+
+
+@pytest.mark.asyncio
+async def test_action_plan_repository_stores_compare_v2_json() -> None:
+    pool = AsyncMock()
+    case_id = uuid4()
+    result_v2 = {
+        "meta": {"schema_version": "compare/2.0"},
+        "action_options": [{"label": "standard"}],
+    }
+
+    await ActionPlanRepository(pool).upsert_compare_json(case_id, result_v2)
+
+    args = pool.execute.await_args.args
+    assert "SET compare_json = $2::jsonb" in args[0]
+    assert args[1] == case_id
+    assert json.loads(args[2]) == result_v2
