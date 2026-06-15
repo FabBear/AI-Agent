@@ -8,7 +8,7 @@ from uuid import UUID
 import asyncpg
 
 from agents.data.kpi_loader import load_kpi_snapshot, load_kpi_window
-from agents.pipeline import build_phase2_pipeline, build_pipeline
+from agents.pipeline import build_pipeline, build_report_pipeline
 from agents.schemas.alert import BottleneckAlert, PotentialBottleneck
 from agents.schemas.cause import CauseReport
 from agents.schemas.kpi import ToolGroupKPI
@@ -108,7 +108,7 @@ async def run_pipeline(
         pipeline = build_pipeline(
             csv_dir=settings.agent_csv_dir,
             run_sim=True,
-            phase1_only=True,
+            stop_at_hitl=True,
             run_detection=False,
         )
         final_state = dict(initial_state)
@@ -179,7 +179,7 @@ async def run_post_hitl(
         selected_plan = await ActionPlanRepository(pool).find_by_id(case_id, selected_plan_id)
         if selected_plan is None:
             raise ValueError("선택한 대응안을 찾을 수 없습니다.")
-        state = _reconstruct_phase2_state(
+        state = _reconstruct_report_state(
             pending,
             selected_plan,
             decided_by,
@@ -188,7 +188,7 @@ async def run_post_hitl(
         )
         tg_code = str((pending.get("compare_formatted") or [{}])[0].get("toolgroup", ""))
         state["historical_context"] = await _fetch_historical_context(pool, tg_code)
-        result = await asyncio.to_thread(build_phase2_pipeline().invoke, state)
+        result = await asyncio.to_thread(build_report_pipeline().invoke, state)
         report_results = result.get("report_results", [])
         tg_code = str((pending.get("compare_formatted") or [{}])[0].get("toolgroup", ""))
         for report_result in report_results:
@@ -267,6 +267,19 @@ async def _handle_pipeline_event(
         await plan_repo.bulk_insert(case_id, candidates)
         return "compare"
     if node_name == "compare_llm":
+        compare_formatted = state.get("compare_formatted") or []
+        if compare_formatted:
+            formatted = next(
+                (
+                    item
+                    for item in compare_formatted
+                    if item.get("toolgroup") == tg_code
+                ),
+                compare_formatted[0],
+            )
+            result_v2 = formatted.get("result_v2") or {}
+            if result_v2:
+                await plan_repo.upsert_compare_json(case_id, result_v2)
         summary = _extract_summary("compare", state)
         await _complete_step(case_id, "compare", summary, step_repo, spring_client)
         await step_repo.mark_in_progress(case_id, "hitl")
@@ -394,7 +407,7 @@ def _load_pending_state(case_id: UUID) -> dict:
     return json.loads(pending_path.read_text(encoding="utf-8"))
 
 
-def _reconstruct_phase2_state(
+def _reconstruct_report_state(
     pending: dict,
     selected_plan: dict,
     decided_by: UUID,
