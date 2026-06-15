@@ -160,8 +160,19 @@ def _routing_hint(message: str) -> str | None:
     return None
 
 
-def _to_messages(message: str, history: list[dict], context: str | None, knowledge: str | None = None) -> list:
+def _to_messages(
+    message: str,
+    history: list[dict],
+    context: str | None,
+    knowledge: str | None = None,
+    now: str | None = None,
+) -> list:
     msgs: list = [SystemMessage(content=_system_prompt())]
+    if now:
+        msgs.append(SystemMessage(content=(
+            f"[현재 시각] 지금은 {now} 이다. '오늘/지금/이번 주/이번 달/최근 N일/최근' 등 모든 상대적 시간 표현은 "
+            "이 시각을 기준으로 해석하라. 실제 달력 날짜를 임의로 추측하지 말 것."
+        )))
     if knowledge:
         msgs.append(SystemMessage(content=knowledge))
     if context:

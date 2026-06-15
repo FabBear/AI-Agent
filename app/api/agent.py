@@ -17,7 +17,6 @@ from app.repositories.agent_step_repository import AgentStepRepository
 from app.services.agent_service import run_pipeline_with_timeout, run_post_hitl
 
 router = APIRouter()
-_USER_TASKS: dict[UUID, AgentTaskAgentResponse] = {}
 
 
 class RiskGrade(str, Enum):
@@ -100,32 +99,22 @@ async def run_agent(
     return success(AgentRunResult(case_id=request.case_id))
 
 
-@router.post("/tasks", response_model=AgentTaskAgentResponse)
-async def create_agent_task(
+@router.post("/fab-briefing", response_model=AgentTaskAgentResponse)
+async def create_fab_briefing(
     request: AgentTaskAgentRequest,
     _: Annotated[None, Depends(verify_internal_token)],
 ) -> AgentTaskAgentResponse:
-    if request.task_type == "REPORT_PERIOD_SUMMARY":
-        response = await build_period_report_response(request)
-    else:
-        response = await build_fab_briefing_response(request)
-    _USER_TASKS[request.task_id] = response
-    return response
+    """FAB3D 현황 브리핑. 결과는 백엔드(tt_fab_briefing)가 영속한다 — AI는 stateless."""
+    return await build_fab_briefing_response(request)
 
 
-@router.get("/tasks/{task_id}", response_model=AgentTaskAgentResponse)
-async def get_agent_task(
-    task_id: UUID,
+@router.post("/period-report", response_model=AgentTaskAgentResponse)
+async def create_period_report(
+    request: AgentTaskAgentRequest,
     _: Annotated[None, Depends(verify_internal_token)],
 ) -> AgentTaskAgentResponse:
-    response = _USER_TASKS.get(task_id)
-    if response is None:
-        return AgentTaskAgentResponse(
-            status="FAILED",
-            progress=[],
-            errorMessage="해당 taskId의 Agent 작업을 찾을 수 없습니다.",
-        )
-    return response
+    """리포트 아카이브 기간 요약/회고. 결과는 백엔드(tt_period_report)가 영속한다 — AI는 stateless."""
+    return await build_period_report_response(request)
 
 
 @router.post("/hitl-result", response_model=ApiResponse[HitlResult])

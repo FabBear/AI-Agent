@@ -37,6 +37,7 @@ class ChatMessageRequest(ApiModel):
     history: list[ChatTurn] = Field(default_factory=list)
     context: str | None = None
     live_status: str | None = Field(default=None, alias="liveStatus")
+    now: str | None = None  # presentation 기준 "현재 시각"(ISO). 상대시간 해석 anchor.
     generate_title: bool = Field(default=False, alias="generateTitle")
 
 
@@ -87,7 +88,7 @@ async def send_message(
             history = [turn.model_dump() for turn in request.history]
             result = await answer_chat(
                 request.message, history=history, context=request.context,
-                live_status=request.live_status, fab_id=request.fab_id,
+                live_status=request.live_status, fab_id=request.fab_id, now=request.now,
             )
             if result:
                 answer = result["answer"]
@@ -126,7 +127,7 @@ async def stream_message(
             history = [turn.model_dump() for turn in request.history]
             async for ev in answer_chat_stream(
                 request.message, history=history, context=request.context,
-                live_status=request.live_status, fab_id=request.fab_id,
+                live_status=request.live_status, fab_id=request.fab_id, now=request.now,
             ):
                 yield f"event: {ev['type']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n"
             if request.generate_title:

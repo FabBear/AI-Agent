@@ -98,6 +98,7 @@ async def answer_chat(
     context: str | None = None,
     live_status: str | None = None,
     fab_id: UUID | None = None,
+    now: str | None = None,
     model: str | None = None,
 ) -> dict | None:
     """LLM 답변 + 참고 출처 + 후속 질문(같은 호출에서) 생성. 키 없음/오류 시 None."""
@@ -108,7 +109,7 @@ async def answer_chat(
 
     agent = build_agent(live_status, fab_id, model)
     llm, ui_cards = agent["llm"], agent["ui_cards"]
-    messages = _to_messages(message, history or [], context)
+    messages = _to_messages(message, history or [], context, now=now)
     ai = None
     card_rule_added = False
     for _ in range(int(os.getenv("CHAT_AGENT_MAX_TOOL_STEPS", "4"))):
@@ -157,6 +158,7 @@ async def answer_chat_stream(
     context: str | None = None,
     live_status: str | None = None,
     fab_id: UUID | None = None,
+    now: str | None = None,
     model: str | None = None,
 ):
     """SSE 스트리밍 제너레이터. yield: stage/token/meta/error."""
@@ -171,7 +173,7 @@ async def answer_chat_stream(
 
     agent = build_agent(live_status, fab_id, model)
     llm, ui_cards = agent["llm"], agent["ui_cards"]
-    messages = _to_messages(message, history or [], context)
+    messages = _to_messages(message, history or [], context, now=now)
     card_rule_added = False
     emitted = 0
     full_text = ""

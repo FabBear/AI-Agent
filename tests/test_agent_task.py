@@ -2,6 +2,8 @@
 
 (챗봇 라우팅·후처리·STT 회귀는 test_chatbot_*.py / test_stt_correction.py 참조.)"""
 
+import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -10,6 +12,8 @@ from agents.agent_task.llm import should_use_llm
 from agents.agent_task.schemas import AgentTaskAgentRequest
 from agents.fab_briefing_agent import build_fab_briefing_baseline, build_fab_briefing_response
 from agents.period_report_agent import build_period_report_baseline
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 def test_fab_briefing_prefers_backend_context_tool_groups():
@@ -137,10 +141,159 @@ def test_period_report_monthly_uses_history_summary_context():
     result = build_period_report_baseline(request)
 
     assert result.artifacts[0].type == "MONTHLY_REPORT"
-    assert result.artifacts[0].title == "2026년 6월 월간 운영 브리핑"
+    assert result.artifacts[0].title == "2026년 6월 월간 이슈 브리핑"
     assert "120건" in result.summary
     assert "DefMet_FE_43 9건" in result.summary
     assert result.evidence[0].value == "120건"
+
+
+def test_period_report_reference_fixture_critical_case():
+    fixture = json.loads((FIXTURE_DIR / "report_we_fe_8_critical.json").read_text())
+    item = {
+        "caseId": "WE_FE_8-20260613-1652",
+        "tgName": fixture["meta"]["toolgroup"],
+        "areaName": fixture["meta"]["process_name"],
+        "riskGrade": fixture["meta"]["severity"].upper(),
+        "decision": "APPROVED",
+        "hasReport": False,
+        "detectedAt": "2026-06-13T16:52:00+09:00",
+    }
+    request = AgentTaskAgentRequest(
+        taskId=uuid4(),
+        fabId=uuid4(),
+        userId=uuid4(),
+        taskType="REPORT_PERIOD_SUMMARY",
+        sourcePage="REPORT_ARCHIVE",
+        context={"backendContext": {"history": {"items": [item]}}},
+        params={"dateRange": {"from": "2026-06-13", "to": "2026-06-13"}},
+    )
+
+    result = build_period_report_baseline(request)
+
+    assert result.artifacts[0].title == "기간 이슈 보고서"
+    assert "병목 케이스 1건" in result.summary
+    assert next(e for e in result.evidence if e.label == "Critical / High").value == "1 / 0건"
+    assert result.propagation.affected_tool_groups == ["WE_FE_8"]
+    assert "120건" not in result.model_dump_json()
+
+
+def test_period_report_marks_missing_action_effect_as_unvalidated():
+    request = AgentTaskAgentRequest(
+        taskId=uuid4(),
+        fabId=uuid4(),
+        userId=uuid4(),
+        taskType="REPORT_PERIOD_SUMMARY",
+        sourcePage="REPORT_ARCHIVE",
+        context={
+            "items": [
+                {
+                    "caseId": str(uuid4()),
+                    "tgName": "WE_FE_8",
+                    "riskGrade": "HIGH",
+                    "decision": None,
+                    "hasReport": False,
+                }
+            ]
+        },
+        params={"dateRange": {"from": "2026-06-13", "to": "2026-06-13"}},
+    )
+
+    result = build_period_report_baseline(request)
+
+    assert next(e for e in result.evidence if e.label == "승인 / 반려 / 대기").value == "0 / 0 / 0건"
+    assert any(d.title == "조치 효과 검증" and "미검증" in d.description for d in result.response_directions)
+
+
+def test_period_report_uses_period_report_evidence_and_report_references():
+    report_id = str(uuid4())
+    case_id = str(uuid4())
+    request = AgentTaskAgentRequest(
+        taskId=uuid4(),
+        fabId=uuid4(),
+        userId=uuid4(),
+        taskType="REPORT_PERIOD_SUMMARY",
+        sourcePage="REPORT_ARCHIVE",
+        context={
+            "dateRange": {"from": "2026-06-13", "to": "2026-06-14"},
+            "backendContext": {
+                "history": {
+                    "items": [
+                        {
+                            "caseId": case_id,
+                            "tgName": "WE_FE_8",
+                            "areaName": "Wet_Etch",
+                            "riskGrade": "CRITICAL",
+                            "decision": "APPROVED",
+                            "hasReport": True,
+                        }
+                    ]
+                },
+                "historySummary": {
+                    "totalCases": 1,
+                    "riskCounts": {"CRITICAL": 1, "HIGH": 0},
+                    "statusCounts": {"AWAITING_HITL": 0},
+                    "decisionCounts": {"APPROVED": 1, "REJECTED": 0},
+                    "reportCount": 1,
+                    "topToolGroups": [{"name": "WE_FE_8", "areaName": "Wet_Etch", "count": 1}],
+                    "topAreas": [{"name": "Wet_Etch", "count": 1}],
+                    "avgEstAvgWaitDelta": -0.2,
+                    "avgEstDeliveryComplianceDelta": 0.7,
+                },
+                "periodReports": [
+                    {
+                        "caseId": case_id,
+                        "reportId": report_id,
+                        "tgName": "WE_FE_8",
+                        "riskGrade": "CRITICAL",
+                        "summary": "Q-time 급증과 WIP 편중으로 병목이 확대됨",
+                        "rootCauseText": "WIP 편중",
+                    }
+                ],
+            },
+        },
+        params={"dateRange": {"from": "2026-06-13", "to": "2026-06-14"}},
+    )
+
+    result = build_period_report_baseline(request)
+
+    assert next(e for e in result.evidence if e.label == "케이스 리포트").value == "1건"
+    assert result.references.report_ids == [report_id]
+    assert result.references.case_ids == [case_id]
+    assert any(d.title == "대표 원인 요약 검토" and "WIP 편중" in d.description for d in result.response_directions)
+
+
+def test_period_report_monthly_empty_summary_does_not_fabricate_numbers():
+    request = AgentTaskAgentRequest(
+        taskId=uuid4(),
+        fabId=uuid4(),
+        userId=uuid4(),
+        taskType="REPORT_PERIOD_SUMMARY",
+        sourcePage="REPORT_ARCHIVE",
+        context={
+            "dateRange": {"from": "2026-06-01", "to": "2026-06-30"},
+            "backendContext": {
+                "history": {"items": []},
+                "historySummary": {
+                    "riskCounts": {},
+                    "decisionCounts": {},
+                },
+            },
+        },
+        params={
+            "intent": "monthly",
+            "periodType": "MONTHLY",
+            "month": "2026-06",
+            "reportTone": "EXECUTIVE",
+        },
+    )
+
+    result = build_period_report_baseline(request)
+    result_json = result.model_dump_json()
+
+    assert result.artifacts[0].title == "2026년 6월 월간 이슈 브리핑"
+    assert result.evidence[0].value == "0건"
+    assert "120건" not in result_json
+    assert "확인 필요" in result_json
 
 
 def _briefing_ctx(toolgroups=None, procsummaries=None, tools=None):
@@ -228,6 +381,27 @@ async def test_case_effectiveness_flags_unvalidated_then_reports_actual():
                   "actual_avg_wait_delta": -0.4, "actual_throughput_delta": 1.0, "validated_at": datetime(2026, 6, 1)}]
     out2 = await get_case_effectiveness(_report_ctx_with_repo(_FakeCaseRepo(detail, validated)))
     assert "실측" in out2 and "-0.40" in out2
+
+
+@pytest.mark.asyncio
+async def test_case_resolution_renders_case_times_in_kst():
+    from datetime import datetime, timezone
+
+    from agents.period_report_agent.tools import get_case_resolution
+
+    detail = {
+        "case_id": "c1",
+        "tg_name": "DE_FE_53",
+        "tg_code": "DE_FE_53",
+        "area_name": "Dry_Etch",
+        "status": "DETECTED",
+        "detected_at": datetime(2026, 6, 14, 11, 58, tzinfo=timezone.utc),
+        "resolved_at": None,
+    }
+
+    out = await get_case_resolution(_report_ctx_with_repo(_FakeCaseRepo(detail)))
+
+    assert "감지 06-14 20:58" in out
 
 
 class _FakeAI:
