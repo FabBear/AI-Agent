@@ -120,7 +120,8 @@ def analyze_cause(
             )
 
         # ── 5. 트렌드 + Evidence Aggregation + LLM Judge (재시도 루프)
-        trend_top = get_trend_top(window, tg, top_n=3)
+        shap_feature_names = [s.feature for s in shap_top]
+        trend_top = get_trend_top(window, tg, top_n=3, priority_features=shap_feature_names)
         evidence_bundle = []
         categories = []
         judgment = None
@@ -154,18 +155,19 @@ def analyze_cause(
         g_star_set = set(g_star.toolgroups if g_star else [])
         g_star_confirmed = tg in g_star_set
         g_star_sig_kpis = []
-        if g_star_confirmed and g_star and g_star.kpi_evidence:
+        if g_star and g_star.kpi_evidence:
             raw_evs = g_star.kpi_evidence.get(tg, [])
-            g_star_sig_kpis = [
-                GStarKpiResult(
-                    kpi=e.kpi, delta_mean=e.delta_mean,
-                    t_p_adj=e.t_p_adj, significant=e.significant,
-                )
-                for e in sorted(
-                    raw_evs,
-                    key=lambda e: (0 if e.significant else 1, -abs(e.delta_mean)),
-                )
-            ]
+            if raw_evs:
+                g_star_sig_kpis = [
+                    GStarKpiResult(
+                        kpi=e.kpi, delta_mean=e.delta_mean,
+                        t_p_adj=e.t_p_adj, significant=e.significant,
+                    )
+                    for e in sorted(
+                        raw_evs,
+                        key=lambda e: (0 if e.significant else 1, -abs(e.delta_mean)),
+                    )
+                ]
 
         agreed = [judgment.primary_cause] + list(judgment.secondary_causes or [])
         consensus = ConsensusResult(

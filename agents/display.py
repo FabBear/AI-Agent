@@ -77,55 +77,26 @@ def print_cause_reports(reports: list[CauseReport]) -> None:
         else:
             print("    (데이터 없음)")
 
-        # ── 업스트림
-        if r.upstream_suspects:
-            print(f"\n  [③ 업스트림 과부하]  {', '.join(r.upstream_suspects)}")
+        # ── 통계적 분석 (G* KPI 검정 + 시뮬 예측)
+        print(f"\n  [③ 통계적 분석]")
 
-        # ── G* T-test
-        if r.consensus.g_star_confirmed and r.consensus.g_star_sig_kpis:
-            print(f"\n  [④ G* T-test]")
+        if r.consensus.g_star_sig_kpis:
+            conf_label = "TG 포함(통계 확인)" if r.consensus.g_star_confirmed else "TG 미포함"
+            print(f"  ┌ G* KPI 검정  [{conf_label}]  (p<0.05=유의)")
+            print(f"  {'지표':<28} {'Δ평균':>8}  {'p-value':>8}  결과")
+            print(f"  {'─' * 58}")
             for e in r.consensus.g_star_sig_kpis:
-                verdict = "★ 통계 확인" if e.significant else "비유의"
-                print(f"    {e.kpi:<28} Δ={e.delta_mean:+.1f}  p={e.t_p_adj:.4f}  {verdict}")
+                verdict = "★ 유의" if e.significant else "─"
+                print(f"  {e.kpi:<28} {e.delta_mean:>+8.3f}  {e.t_p_adj:>8.4f}  {verdict}")
+        else:
+            print(f"  ┌ G* KPI 검정  (데이터 없음)")
 
-        # ── 카테고리 수렴 (핵심 신규)
-        if r.cause_categories:
-            print(f"\n  [카테고리 수렴 분석] — 4가지 분석 종합 (score 순)")
-            bar_max = max((c.total_score for c in r.cause_categories), default=1.0) or 1.0
-            for cat in r.cause_categories:
-                bar_len = int(cat.total_score / bar_max * 20)
-                bar = "█" * bar_len + "░" * (20 - bar_len)
-                trend_str = f"Trend★={cat.n_trend_significant}" if cat.n_trend_significant else "Trend=0"
-                g_str = "G*=확인" if cat.g_star_confirmed else "G*=✗"
-                ups_str = "Up=있음" if cat.upstream_match else ""
-                extras = " | ".join(filter(None, [trend_str, g_str, ups_str]))
-                conf_icon = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(cat.confidence, "")
-                print(
-                    f"    {cat.name:<10} {bar}  "
-                    f"SHAP={cat.shap_share_pct:5.1f}%  {extras:<30}  "
-                    f"score={cat.total_score:.3f}  {conf_icon}[{cat.confidence}]"
-                )
-
-        # ── LLM 판정 결과 (핵심 신규)
-        if r.judgment:
-            j = r.judgment
-            conf_icon = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(j.primary_confidence, "")
-            print(f"\n  [LLM 판정]")
-            cat_str = f"  ({j.primary_category})" if j.primary_category else ""
-            print(f"    {conf_icon} 주요 원인: {j.primary_cause}{cat_str}  [{j.primary_confidence}]")
-            print(f"    근거: {j.primary_reasoning}")
-            if j.secondary_causes:
-                print(f"    보조 원인: {', '.join(j.secondary_causes)}")
-            if j.dismissed:
-                print(f"    기각: {', '.join(j.dismissed)}")
-                if j.dismissed_reason:
-                    print(f"           → {j.dismissed_reason}")
-
-        # ── 시뮬 예측
         if r.sim_forecast:
             f = r.sim_forecast
-            print(f"\n  [2시간 후 시뮬 예측]  t={f.t0:.0f} → t={f.t_future:.0f}")
-            print(f"  {'지표':<22} {'현재':>8}  {'2h 후':>8}  {'변화':>8}")
+            horizon_h = (f.t_future - f.t0) / 60
+            horizon_label = f"{horizon_h:.0f}h 후"
+            print(f"\n  ┌ 시뮬 예측  t={f.t0:.0f} → t={f.t_future:.0f}  (+{horizon_h:.0f}h)")
+            print(f"  {'지표':<22} {'현재':>8}  {horizon_label:>8}  {'변화':>8}")
             print(f"  {'─' * 54}")
             for kpi, comp in f.kpi_delta.items():
                 arrow = "↑" if comp.delta > 0 else "↓" if comp.delta < 0 else "─"
@@ -137,6 +108,38 @@ def print_cause_reports(reports: list[CauseReport]) -> None:
             status = "⚠ 악화 예상" if f.gets_worse else "✓ 안정 유지"
             print(f"  {'─' * 54}")
             print(f"  전망: {status}")
+
+        # ── 카테고리 수렴
+        if r.cause_categories:
+            print(f"\n  [④ 카테고리 수렴 분석] — 4가지 분석 종합 (score 순)")
+            bar_max = max((c.total_score for c in r.cause_categories), default=1.0) or 1.0
+            for cat in r.cause_categories:
+                bar_len = int(cat.total_score / bar_max * 20)
+                bar = "█" * bar_len + "░" * (20 - bar_len)
+                trend_str = f"Trend★={cat.n_trend_significant}" if cat.n_trend_significant else "Trend=0"
+                g_str = "G*=확인" if cat.g_star_confirmed else "G*=✗"
+                extras = f"{trend_str} | {g_str}"
+                conf_icon = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(cat.confidence, "")
+                print(
+                    f"    {cat.name:<10} {bar}  "
+                    f"SHAP={cat.shap_share_pct:5.1f}%  {extras:<20}  "
+                    f"score={cat.total_score:.3f}  {conf_icon}[{cat.confidence}]"
+                )
+
+        # ── LLM 판정
+        if r.judgment:
+            j = r.judgment
+            conf_icon = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(j.primary_confidence, "")
+            print(f"\n  [⑤ LLM 판정]")
+            cat_str = f"  ({j.primary_category})" if j.primary_category else ""
+            print(f"    {conf_icon} 주요 원인: {j.primary_cause}{cat_str}  [{j.primary_confidence}]")
+            print(f"    근거: {j.primary_reasoning}")
+            if j.secondary_causes:
+                print(f"    보조 원인: {', '.join(j.secondary_causes)}")
+            if j.dismissed:
+                print(f"    기각: {', '.join(j.dismissed)}")
+                if j.dismissed_reason:
+                    print(f"           → {j.dismissed_reason}")
 
         print(f"\n  📝 {r.cause_summary}")
         print("─" * 70)
