@@ -1,9 +1,11 @@
-"""기간 종합 보고서 에이전트의 도구 — LLM이 골라 호출.
+"""기간 이슈 보고서 에이전트의 도구 — LLM이 골라 호출.
 
 리포트 화면이 넘긴 기간 이력(history)·집계(historySummary)를 슬라이스한다. 모두 실데이터만
 반환 → 환각 가드레일. 케이스 단건 상세 설명은 챗봇(get_case_detail)이 담당."""
 
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from langchain_core.tools import StructuredTool
 
@@ -18,6 +20,7 @@ from agents.period_report_agent.rule_based import (
 
 TOOL_LABELS = {
     "get_period_summary": "기간 집계 조회",
+    "get_period_report_evidence": "기간 케이스 리포트 근거 조회",
     "get_repeat_bottlenecks": "반복 병목 TG 조회",
     "get_action_effectiveness": "승인 대응안 효과 조회",
     "get_period_cases": "기간 케이스 목록 조회",
@@ -25,6 +28,7 @@ TOOL_LABELS = {
     "get_case_resolution": "케이스 해결 타임라인 조회",
     "get_case_cause": "케이스 원인·모델 신뢰도 조회",
 }
+KST = ZoneInfo("Asia/Seoul")
 
 
 def _delta(value, suffix: str = "") -> str:
@@ -37,8 +41,18 @@ def _delta(value, suffix: str = "") -> str:
 
 
 def _dt(value) -> str:
+    if value is None:
+        return "-"
     try:
-        return f"{value:%m-%d %H:%M}"
+        if isinstance(value, str):
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        elif isinstance(value, datetime):
+            dt = value
+        else:
+            return "-"
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(KST).strftime("%m-%d %H:%M")
     except (TypeError, ValueError):
         return "-"
 
@@ -51,6 +65,11 @@ def _items(ctx: TaskContext) -> list[dict[str, Any]]:
     history = ctx.live.get("history")
     items = history.get("items") if isinstance(history, dict) and isinstance(history.get("items"), list) else ctx.context.get("items")
     return [it for it in items if isinstance(it, dict)] if isinstance(items, list) else []
+
+
+def _period_reports(ctx: TaskContext) -> list[dict[str, Any]]:
+    reports = ctx.live.get("periodReports")
+    return [it for it in reports if isinstance(it, dict)] if isinstance(reports, list) else []
 
 
 def get_period_summary(ctx: TaskContext) -> str:
@@ -72,6 +91,19 @@ def get_period_summary(ctx: TaskContext) -> str:
         f"기간 케이스 {total}건 — Critical {critical}/High {high}, "
         f"승인 {approved}/반려 {rejected}/승인대기 {awaiting}, 리포트 {report_count}건."
     )
+
+
+def get_period_report_evidence(ctx: TaskContext) -> str:
+    reports = _period_reports(ctx)
+    if not reports:
+        return "선택 기간에 연결된 케이스 리포트(td_response_report)가 없습니다. 케이스 이력과 집계 중심으로 작성해야 합니다."
+    lines = []
+    for report in reports[:8]:
+        tg = report.get("tgName") or "TG 미상"
+        risk = report.get("riskGrade") or "위험도 미상"
+        summary = str(report.get("summary") or report.get("rootCauseText") or "요약 없음").strip()
+        lines.append(f"{tg}({risk}) report={report.get('reportId')}: {summary[:180]}")
+    return f"기간 케이스 리포트 {len(reports)}건: " + " / ".join(lines)
 
 
 def get_repeat_bottlenecks(ctx: TaskContext) -> str:
@@ -169,6 +201,9 @@ def build_report_tools(ctx: TaskContext) -> tuple[list, dict, dict]:
     def period_summary() -> str:
         return get_period_summary(ctx)
 
+    def period_report_evidence() -> str:
+        return get_period_report_evidence(ctx)
+
     def repeat_bottlenecks() -> str:
         return get_repeat_bottlenecks(ctx)
 
@@ -190,6 +225,8 @@ def build_report_tools(ctx: TaskContext) -> tuple[list, dict, dict]:
     tools = [
         StructuredTool.from_function(func=period_summary, name="get_period_summary",
             description="선택 기간의 전체 집계(케이스 수·위험등급·승인/반려/승인대기·리포트 수). 보고서의 출발점."),
+        StructuredTool.from_function(func=period_report_evidence, name="get_period_report_evidence",
+            description="선택 기간에 생성된 케이스 리포트(td_response_report)의 요약·원인 근거. 기간 이슈 보고서의 근거 섹션에 사용."),
         StructuredTool.from_function(func=repeat_bottlenecks, name="get_repeat_bottlenecks",
             description="기간 내 반복 등장한 TG/Area 순위. 구조적 병목 후보 식별에 사용."),
         StructuredTool.from_function(func=action_effectiveness, name="get_action_effectiveness",
@@ -205,6 +242,7 @@ def build_report_tools(ctx: TaskContext) -> tuple[list, dict, dict]:
     ]
     tool_fns = {
         "get_period_summary": period_summary,
+        "get_period_report_evidence": period_report_evidence,
         "get_repeat_bottlenecks": repeat_bottlenecks,
         "get_action_effectiveness": action_effectiveness,
         "get_period_cases": period_cases,

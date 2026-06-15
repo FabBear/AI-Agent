@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,7 +38,7 @@ class PredictService:
         self._booster: xgb.Booster | None = None
         self._model_lock = Lock()
         self._last_refresh = 0.0           # 마지막 refresh 시각(monotonic)
-        self._loaded_version: str | None = None  # 현재 로드된 MLflow Production 버전(local이면 None)
+        self._loaded_version: str | None = None  # 현재 로드된 MLflow alias 버전(local이면 None)
 
     def predict(
         self,
@@ -89,7 +90,7 @@ class PredictService:
         return results
 
     def _load_model(self) -> xgb.Booster:
-        """MLflow Production 모델을 우선 사용하되, 주기적으로 새 버전 승격을 감지해 교체한다.
+        """MLflow production alias 모델을 우선 사용하되, 주기적으로 새 버전 승격을 감지해 교체한다.
 
         - refresh_interval 이내면 캐시 그대로 사용(매 예측마다 Registry 조회 안 함).
         - MLflow 서버 미응답/조회 실패 시 현재 캐시 모델 유지(graceful degradation).
@@ -115,30 +116,32 @@ class PredictService:
             return self._booster
 
     def _current_production_version(self) -> str | None:
-        """Registry에서 현재 Production 스테이지 버전 번호를 조회(실패 시 None)."""
+        """Registry에서 현재 production alias 버전 번호를 조회(실패 시 None)."""
         try:
+            os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "3")
+            os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "0")
             client = MlflowClient(tracking_uri=self._settings.mlflow_tracking_uri)
-            versions = client.get_latest_versions(
+            version = client.get_model_version_by_alias(
                 self._settings.mlflow_model_name,
-                stages=[self._settings.mlflow_model_stage],
+                self._settings.mlflow_model_stage.lower(),
             )
-            return versions[0].version if versions else None
+            return version.version if version else None
         except Exception as exc:  # 서버 다운/모델 없음 등
-            logger.warning("MLflow Production 버전 조회 실패(캐시/로컬 유지): %s", exc)
+            logger.warning("MLflow production alias 조회 실패(캐시/로컬 유지): %s", exc)
             return None
 
     def _resolve_booster(self, version: str | None) -> tuple[xgb.Booster, str | None]:
-        """MLflow Production 모델 로드 시도 → 실패/부재 시 로컬 .ubj 폴백. (booster, version) 반환."""
+        """MLflow production alias 모델 로드 시도 → 실패/부재 시 로컬 .ubj 폴백."""
         if version is not None:
             try:
                 mlflow.set_tracking_uri(self._settings.mlflow_tracking_uri)
                 loaded = mlflow.xgboost.load_model(
-                    f"models:/{self._settings.mlflow_model_name}/{self._settings.mlflow_model_stage}"
+                    f"models:/{self._settings.mlflow_model_name}@{self._settings.mlflow_model_stage.lower()}"
                 )
                 # XGBClassifier(sklearn)면 내부 Booster 추출 → predict(DMatrix, pred_contribs) 인터페이스 통일
                 booster = loaded.get_booster() if hasattr(loaded, "get_booster") else loaded
                 logger.info(
-                    "MLflow Production 모델 로드: %s v%s",
+                    "MLflow production alias 모델 로드: %s v%s",
                     self._settings.mlflow_model_name,
                     version,
                 )

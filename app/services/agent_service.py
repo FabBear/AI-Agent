@@ -89,12 +89,10 @@ async def run_pipeline(
     try:
         kpi_list = await asyncio.to_thread(
             load_kpi_snapshot,
-            settings.agent_csv_dir,
             snapshot_time,
         )
         window = await asyncio.to_thread(
             load_kpi_window,
-            settings.agent_csv_dir,
             snapshot_time,
             2,
         )
