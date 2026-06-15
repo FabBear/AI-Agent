@@ -118,7 +118,7 @@ def print_cause_reports(reports: list[CauseReport]) -> None:
                 bar = "█" * bar_len + "░" * (20 - bar_len)
                 trend_str = f"Trend★={cat.n_trend_significant}" if cat.n_trend_significant else "Trend=0"
                 g_str = "G*=확인" if cat.g_star_confirmed else "G*=✗"
-                extras = " | ".join(filter(None, [trend_str, g_str]))
+                extras = f"{trend_str} | {g_str}"
                 conf_icon = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(cat.confidence, "")
                 print(
                     f"    {cat.name:<10} {bar}  "

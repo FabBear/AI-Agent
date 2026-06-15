@@ -102,7 +102,7 @@ def _build_prompt(
     if g_star:
         confirmed = toolgroup in (g_star.toolgroups or [])
         conf_str = "포함(통계 확인)" if confirmed else "미포함"
-        kpi_evs = (g_star.kpi_evidence or {}).get(toolgroup, []) if g_star.kpi_evidence else []
+        kpi_evs = g_star.kpi_evidence.get(toolgroup, []) if g_star.kpi_evidence else []
         if kpi_evs:
             kpi_lines = []
             for e in sorted(kpi_evs, key=lambda x: (0 if x.significant else 1, x.t_p_adj)):
