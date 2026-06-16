@@ -12,7 +12,6 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection_cases: str = "bottleneck_cases"
-    qdrant_collection_docs: str = "knowledge_docs"
     mlflow_tracking_uri: str = "http://localhost:5500"
     # [MLOps] MLflow Registry에서 끌어올 모델/스테이지 및 교체(refresh) 주기(초)
     mlflow_model_name: str = "FabGuard_Bottleneck_Model"
