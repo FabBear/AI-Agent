@@ -1,12 +1,13 @@
 """FastAPI endpoint contract tests."""
 
+from types import SimpleNamespace
 from uuid import uuid4
 from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_predict_service
 from app.config import get_settings
 from app.main import app
 
@@ -213,6 +214,33 @@ async def test_predict_returns_empty_predictions_without_metrics(client: AsyncCl
     assert response.status_code == 200
     assert response.json()["data"]["predictions"] == []
     assert response.json()["data"]["highCriticalCount"] == 0
+
+
+@pytest.mark.asyncio
+async def test_model_status_returns_current_serving_model(client: AsyncClient) -> None:
+    class FakePredictService:
+        def model_status(self):
+            return SimpleNamespace(
+                model_name="FabGuard_Bottleneck_Model",
+                alias="production",
+                loaded_version="7",
+                source="MLFLOW",
+                last_refresh_at=None,
+            )
+
+    app.dependency_overrides[get_predict_service] = lambda: FakePredictService()
+    response = await client.get("/api/ml/model-status", headers=internal_token_headers())
+
+    assert response.status_code == 200
+    assert response.json()["data"] == {
+        "modelName": "FabGuard_Bottleneck_Model",
+        "alias": "production",
+        "loadedVersion": "7",
+        "source": "MLFLOW",
+        "lastRefreshAt": None,
+        "available": True,
+        "errorMessage": None,
+    }
 
 
 @pytest.mark.asyncio

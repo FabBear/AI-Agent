@@ -52,6 +52,11 @@ class SpringClient:
         risk_grade: str,
         detected_at: datetime,
         simulation_tick: int | None = None,
+        composite_score: float | None = None,
+        impact_score: float | None = None,
+        affected_count: int | None = None,
+        ct_increase_min: float | None = None,
+        at_risk_lots: float | None = None,
     ) -> None:
         await self._post(
             "/api/internal/snapshot",
@@ -62,6 +67,11 @@ class SpringClient:
                 "riskGrade": risk_grade,
                 "detectedAt": detected_at.isoformat(),
                 "simulationTick": simulation_tick,
+                "compositeScore": composite_score,
+                "impactScore": impact_score,
+                "affectedCount": affected_count,
+                "ctIncreaseMin": ct_increase_min,
+                "atRiskLots": at_risk_lots,
             },
         )
 

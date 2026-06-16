@@ -42,6 +42,16 @@ class PredictResult(ApiModel):
     high_critical_count: int = Field(alias="highCriticalCount")
 
 
+class ModelStatus(ApiModel):
+    model_name: str = Field(alias="modelName")
+    alias: str
+    loaded_version: str | None = Field(default=None, alias="loadedVersion")
+    source: str
+    last_refresh_at: datetime | None = Field(default=None, alias="lastRefreshAt")
+    available: bool = True
+    error_message: str | None = Field(default=None, alias="errorMessage")
+
+
 @router.post("/predict", response_model=ApiResponse[PredictResult])
 async def predict(
     request: PredictRequest,
@@ -100,6 +110,25 @@ async def predict(
             high_critical_count=sum(
                 prediction.risk_grade in {"HIGH", "CRITICAL"} for prediction in predictions
             ),
+        )
+    )
+
+
+@router.get("/model-status", response_model=ApiResponse[ModelStatus])
+async def model_status(
+    _: Annotated[None, Depends(verify_internal_token)],
+    service: Annotated[PredictService, Depends(get_predict_service)],
+) -> ApiResponse[ModelStatus]:
+    status = await asyncio.to_thread(service.model_status)
+    return success(
+        ModelStatus(
+            model_name=status.model_name,
+            alias=status.alias,
+            loaded_version=status.loaded_version,
+            source=status.source,
+            last_refresh_at=status.last_refresh_at,
+            available=True,
+            error_message=None,
         )
     )
 

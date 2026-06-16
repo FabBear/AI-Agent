@@ -9,6 +9,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from agents import config
 from agents.cause_analyzer.consensus_checker import ConsensusReport
 from agents.logger import get_logger
+from agents.prompt_store import get_active_prompt
 from agents.schemas.cause import SHAPFeature, SimForecast, TrendInsight
 from agents.token_tracker import record as _record_tokens
 
@@ -17,6 +18,7 @@ _log = get_logger(__name__)
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 _MAX_TOKENS = 800
+_CAUSE_PROMPT_DEFAULT = "당신은 반도체 FAB 병목 원인 분석 전문가입니다. 반드시 한국어로만 답변하세요."
 
 
 def _build_prompt(
@@ -85,7 +87,9 @@ def _build_prompt(
     elif consensus:
         g_star_instruction = "※ 이 TG는 G* 분석 풀에 포함되지 않음 — [주요 원인]에 'G* 분석 대상 외, SHAP 기반 추정'임을 명시하세요."
 
-    return f"""당신은 반도체 FAB 병목 원인 분석 전문가입니다. 반드시 한국어로만 답변하세요.
+    role_prompt = get_active_prompt("CAUSE_ANALYSIS", _CAUSE_PROMPT_DEFAULT)
+
+    return f"""{role_prompt}
 {g_star_instruction}
 
 아래 데이터를 참고해서 '{toolgroup}' 공정의 병목 원인을 분석하세요.

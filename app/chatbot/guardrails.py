@@ -36,7 +36,7 @@ _NAV_BY_CATEGORY = {
     "approval": ("승인 화면으로 이동", "/agent/approvals", "HITL 승인/반려는 담당 화면에서만 처리합니다."),
     "schedule": ("스케줄링 화면으로 이동", "/scheduling", "Lot 순서·투입량·우선순위 변경은 스케줄링 영역입니다."),
     "db_write": ("담당 화면으로 이동", "/agent/tasks", "생성/저장/삭제 등 변경 작업은 담당 화면에서 확인 후 처리합니다."),
-    "admin_change": ("관리 화면으로 이동", "/admin/thresholds", "모델·임계값 변경은 관리자 화면에서 확인 후 처리합니다."),
+    "admin_change": ("관리 화면으로 이동", "/admin/labeling-rules", "모델·라벨링 기준 변경은 관리자 화면에서 확인 후 처리합니다."),
     "agent_run": ("Agent 작업 화면으로 이동", "/agent/tasks", "진단/파이프라인 실행은 Agent 작업 화면에서 실행합니다."),
 }
 

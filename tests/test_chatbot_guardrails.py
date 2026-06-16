@@ -53,4 +53,4 @@ def test_block_response_has_navigation_card():
 def test_admin_change_response_has_navigation_card():
     resp = execution_block_response("admin_change")
     assert resp["ui"]["type"] == "navigation"
-    assert resp["ui"]["props"]["route"] == "/admin/thresholds"
+    assert resp["ui"]["props"]["route"] == "/admin/labeling-rules"

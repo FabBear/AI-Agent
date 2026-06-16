@@ -79,7 +79,10 @@ CARD_PROMPT = """
 
 
 def _system_prompt() -> str:
-    return "\n\n".join((ROLE_PROMPT, HIERARCHY_PROMPT, TOOL_USE_PROMPT, SAFETY_PROMPT, TRAILER_PROMPT, CARD_PROMPT))
+    from agents.prompt_store import get_active_prompt
+
+    role_prompt = get_active_prompt("CHATBOT", ROLE_PROMPT)
+    return "\n\n".join((role_prompt, HIERARCHY_PROMPT, TOOL_USE_PROMPT, SAFETY_PROMPT, TRAILER_PROMPT, CARD_PROMPT))
 
 
 def _routing_hint(message: str) -> str | None:

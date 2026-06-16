@@ -46,3 +46,21 @@ def test_predict_service_loads_model_once_across_threads(monkeypatch) -> None:
 
     assert load_count == 1
     assert all(booster is boosters[0] for booster in boosters)
+
+
+def test_predict_service_model_status_reports_local_fallback(monkeypatch) -> None:
+    class FakeBooster:
+        def load_model(self, _: object) -> None:
+            return None
+
+    monkeypatch.setattr("app.services.predict_service.xgb.Booster", FakeBooster)
+    service = PredictService()
+    monkeypatch.setattr(service, "_current_production_version", lambda: None)
+
+    status = service.model_status()
+
+    assert status.model_name == "FabGuard_Bottleneck_Model"
+    assert status.alias == "production"
+    assert status.loaded_version is None
+    assert status.source == "LOCAL_FALLBACK"
+    assert status.last_refresh_at is not None

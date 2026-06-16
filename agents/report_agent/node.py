@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,9 +21,21 @@ from agents.report_agent.writer import narrate_with_reflection, render_sections
 
 _ROOT = Path(__file__).parent.parent.parent
 REPORTS_DIR = _ROOT / "report_agent_out"
+_SIM_EPOCH_UTC = datetime(2019, 12, 31, 15, 0, tzinfo=UTC)
+_KST = timezone(timedelta(hours=9))
 
 
 # ── 내부 헬퍼 ─────────────────────────────────────────────────────────────────
+
+def _format_detected_at(snapshot_time: float | None = None) -> str:
+    if snapshot_time is None:
+        return datetime.now(_KST).strftime("%Y-%m-%d %H:%M")
+    try:
+        detected_at = _SIM_EPOCH_UTC + timedelta(minutes=float(snapshot_time))
+    except (TypeError, ValueError):
+        return datetime.now(_KST).strftime("%Y-%m-%d %H:%M")
+    return detected_at.astimezone(_KST).strftime("%Y-%m-%d %H:%M")
+
 
 def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, kpi_map: dict | None = None, detected_at: str = "") -> dict:
     """compare_result + PipelineState 데이터 → report_draft 초기 항목.
@@ -38,7 +50,7 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
     decision_meta  = normalized["decision_meta"]
     approval_info  = normalized["approval_info"]
     if not detected_at:
-        detected_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+        detected_at = _format_detected_at(getattr(kpi, "snapshot_time", None))
 
     bottleneck_info: dict = {
         "tool_group": tg,
@@ -292,7 +304,8 @@ def report_prepare(state: "PipelineState") -> dict:
     cause_map = {r.toolgroup: r for r in cause_reports}
 
     report_draft: list[dict] = []
-    detected_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    snapshot_anchor = kpi_snapshot[0].snapshot_time if kpi_snapshot else None
+    detected_at = _format_detected_at(snapshot_anchor)
 
     for cr in compare_results:
         tg = cr["toolgroup"]
