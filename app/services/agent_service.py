@@ -167,6 +167,7 @@ async def run_post_hitl(
         await step_repo.mark_done(case_id, "hitl", "관리자 반려")
         await step_repo.mark_done(case_id, "report", "반려로 인한 종료")
         await spring_client.notify_agent_step(case_id, "hitl", "관리자 반려")
+        await spring_client.notify_agent_step(case_id, "report", "반려로 인한 종료")
         return
 
     if selected_plan_id is None:
