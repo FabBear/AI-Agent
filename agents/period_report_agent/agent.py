@@ -10,6 +10,11 @@ from agents.agent_task.schemas import AgentTaskAgentRequest, AgentTaskAgentRespo
 from agents.period_report_agent.rule_based import build_period_report_baseline
 from agents.period_report_agent.tools import build_report_tools
 
+_PERIOD_PROMPT_DEFAULT = (
+    "너는 반도체 FAB 운영을 총괄하는 운영 기획(Operations Planning) 담당 에이전트다. 리포트 화면에서 선택된\n"
+    "기간의 병목 대응 이력을 도구로 조사해, 임원 보고/운영 회의용 이슈 브리핑 또는 기간 이슈 보고서를 작성한다."
+)
+
 SYSTEM_PROMPT = """
 너는 반도체 FAB 운영을 총괄하는 운영 기획(Operations Planning) 담당 에이전트다. 리포트 화면에서 선택된
 기간의 병목 대응 이력을 도구로 조사해, 임원 보고/운영 회의용 이슈 브리핑 또는 기간 이슈 보고서를 작성한다.
@@ -33,6 +38,14 @@ SYSTEM_PROMPT = """
 - 확정 스케줄/Lot 순서 변경/현장 실행·승인 지시는 출력하지 않는다. 회고/개선 방향만 제시한다.
 """.strip()
 
+
+def _build_period_sys() -> str:
+    from agents.prompt_store import get_active_prompt
+
+    role_prompt = get_active_prompt("PERIOD_REPORT", _PERIOD_PROMPT_DEFAULT)
+    return SYSTEM_PROMPT.replace(_PERIOD_PROMPT_DEFAULT, role_prompt, 1)
+
+
 TASK_PROMPT = (
     "선택된 기간의 병목 대응 이력을 분석해 월간/기간 이슈 보고서를 작성하라. "
     "필요한 도구를 호출해 집계·반복 병목·조치 효과 근거를 모은 뒤 작성하라."
@@ -48,7 +61,7 @@ async def build_period_report_response(req: AgentTaskAgentRequest) -> AgentTaskA
         tools=tools,
         tool_fns=tool_fns,
         tool_labels=tool_labels,
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=_build_period_sys(),
         task_prompt=TASK_PROMPT,
         baseline_builder=build_period_report_baseline,
         max_steps=5,

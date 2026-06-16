@@ -1,4 +1,4 @@
-# ── XGBoost 학습 라벨링 임계값 (MLOps data_labeling.ipynb 섹션 7) ──
+# ── 라벨링 기준 폴백 (SSOT = tm_bottleneck_labeling_rule; 여기선 DB 미연결 시 예비값) ──
 Q_THR: float = 30.0
 W_THR: float = 1.0
 WIP_THR: float = 3.0

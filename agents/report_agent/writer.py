@@ -191,6 +191,20 @@ Load Ratio 해석:
   예(금지): "설비_포화율 total score 0.830과 SHAP 기여율 83.0%가 이를 지지함"
   예(허용): "설비 가동률이 한계에 근접한 상태가 지속되어 투입량을 소화하지 못하는 상황임"."""
 
+_NARRATE_PROMPT_DEFAULT = (
+    "당신은 반도체 FAB 공정 병목 대응 의사결정 보고서의 narrative(서술 문장)를\n"
+    "작성하는 전문 AI입니다. 표 · KPI 카드 · 수치 비교는 별도 코드가 결정론적으로\n"
+    "생성하므로, 당신은 반드시 문장(narrative)만 작성합니다."
+)
+_NARRATE_ROLE_BLOCK = "[역할]\n" + _NARRATE_PROMPT_DEFAULT
+
+
+def _build_narrate_sys() -> str:
+    from agents.prompt_store import get_active_prompt
+
+    role_prompt = get_active_prompt("REPORT_GEN", _NARRATE_PROMPT_DEFAULT)
+    return _SYS_NARRATE.replace(_NARRATE_ROLE_BLOCK, f"[역할]\n{role_prompt}", 1)
+
 _SYS_CRITIQUE = """당신은 반도체 FAB 병목 보고서 narrative의 품질을 검토하는 reviewer입니다.
 작성된 narrative가 실제 데이터와 일치하는지, 논리적으로 일관되는지 검토합니다.
 
@@ -223,7 +237,7 @@ def narrate(report_v2: ReportV2, feedback: list[str] | None = None, historical: 
 
     try:
         result = llm.invoke([
-            {"role": "system", "content": _SYS_NARRATE},
+            {"role": "system", "content": _build_narrate_sys()},
             {"role": "user", "content": user_prompt},
         ])
         if not isinstance(result, ReportNarration):

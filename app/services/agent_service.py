@@ -1,12 +1,13 @@
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
 import asyncpg
 
+from agents.cascade_analyzer.node import analyze_cascade
 from agents.data.kpi_loader import load_kpi_snapshot, load_kpi_window
 from agents.pipeline import build_pipeline, build_report_pipeline
 from agents.schemas.alert import BottleneckAlert, PotentialBottleneck
@@ -23,6 +24,7 @@ from app.services.spring_client import SpringClient, get_spring_client
 logger = logging.getLogger(__name__)
 _ROOT = Path(__file__).resolve().parents[2]
 _HITL_PENDING_DIR = _ROOT / "hitl_pending"
+_SIM_EPOCH_UTC = datetime(2019, 12, 31, 15, 0, tzinfo=UTC)
 
 
 async def run_pipeline_with_timeout(
@@ -105,8 +107,17 @@ async def run_pipeline(
             snapshot_time,
             bottleneck_prob,
         )
+
+        # 비-CRITICAL(HIGH): 확산영향(cascade)까지만 돌려 위험 점수만 산정·저장하고,
+        # 무거운 원인분석 이후는 건너뛴다. 맵에는 점수가 뜨고, 알림은 CRITICAL만(백엔드에서 게이트).
+        if risk_grade != "CRITICAL":
+            await _run_cascade_only(
+                case_id, tg_id, tg_code, bottleneck_prob, risk_grade,
+                initial_state, step_repo, spring_client,
+            )
+            return
+
         pipeline = build_pipeline(
-            csv_dir=settings.agent_csv_dir,
             run_sim=True,
             stop_at_hitl=True,
             run_detection=False,
@@ -340,19 +351,85 @@ def _initial_state(
 def _extract_summary(node_name: str, state: dict) -> str | None:
     if node_name == "cascade":
         alerts = state.get("alerts", [])
-        critical = sum(alert.severity.value.upper() == "CRITICAL" for alert in alerts)
-        return f"병목 알림 {len(alerts)}건, CRITICAL {critical}건"
+        if not alerts:
+            return "확산 영향 없음"
+        critical = [a for a in alerts if a.severity.value.upper() == "CRITICAL"]
+        primary = critical[0] if critical else alerts[0]
+        path_parts = [primary.toolgroup]
+        affected = list(getattr(primary.impact, "affected_tgs", []))
+        if affected:
+            path_parts.extend(affected[:2])
+        path = " → ".join(path_parts) + " 확산 경로 확인"
+        at_risk = getattr(primary.impact, "at_risk_lots", None)
+        ct = getattr(primary.impact, "ct_increase_min", None)
+        metrics = []
+        if at_risk is not None:
+            metrics.append(f"위험 Lot {int(at_risk)}건")
+        if ct is not None:
+            metrics.append(f"CT +{int(ct)}분 예측")
+        suffix = f", {', '.join(metrics)}" if metrics else ""
+        return f"{path}{suffix}, 병목 알림 {len(alerts)}건 CRITICAL {len(critical)}건"
     if node_name == "cause":
         reports = state.get("cause_reports", [])
         return reports[0].cause_summary[:500] if reports else None
     if node_name == "solution":
-        return f"대응안 {len(state.get('solution_candidates', []))}건 생성"
+        candidates = state.get("solution_candidates", [])
+        if not candidates:
+            return "대응안 후보 없음"
+        names = []
+        for c in candidates[:3]:
+            pid = getattr(c, "plan_id", None)
+            nm = getattr(c, "name", None)
+            if pid:
+                names.append(str(pid))
+            elif nm:
+                names.append(str(nm))
+        name_str = f": {', '.join(names)}" if names else ""
+        return f"대응안 {len(candidates)}건 생성{name_str}"
     if node_name == "compare":
         formatted = state.get("compare_formatted", [])
         if not formatted:
             return None
         return str(formatted[0].get("recommendation", {}).get("reason") or "")[:500]
     return None
+
+
+async def _run_cascade_only(
+    case_id: UUID,
+    tg_id: UUID,
+    tg_code: str,
+    bottleneck_prob: float,
+    risk_grade: str,
+    initial_state: dict,
+    step_repo: AgentStepRepository,
+    spring_client: SpringClient,
+) -> None:
+    """비-CRITICAL(HIGH): 확산영향(cascade)만 계산해 composite 위험 점수를 스냅샷에 저장하고 종료한다.
+    무거운 원인분석/대응안/리포트는 돌리지 않는다 → 맵에는 점수가 뜨지만 알림은 없다(알림은 백엔드가 CRITICAL만)."""
+    cascade_state = await asyncio.to_thread(analyze_cascade, initial_state)
+    target = next((a for a in cascade_state.get("alerts", []) if a.toolgroup == tg_code), None)
+    composite = target.composite_score if target else None
+    impact = target.impact if target else None
+    snapshot_time = _snapshot_time_from_state(cascade_state) or _snapshot_time_from_state(initial_state)
+    try:
+        await spring_client.request_snapshot(
+            case_id,
+            tg_id,
+            bottleneck_prob,
+            risk_grade,
+            _detected_at_from_snapshot_time(snapshot_time),
+            simulation_tick=_simulation_tick(snapshot_time),
+            composite_score=composite,
+            impact_score=impact.impact_score if impact else None,
+            affected_count=len(impact.affected_tgs) if impact else None,
+            ct_increase_min=impact.ct_increase_min if impact else None,
+            at_risk_lots=impact.at_risk_lots if impact else None,
+        )
+    except Exception as exc:
+        logger.error("cascade-only 스냅샷 요청 실패: case_id=%s error=%s", case_id, exc)
+    for step in ("cascade", "cause", "solution", "compare", "hitl", "report"):
+        await step_repo.mark_done(case_id, step, "위험 점수만 산정(비-CRITICAL, 원인분석 생략)")
+    await spring_client.notify_agent_step(case_id, "cascade", "위험 점수 산정 완료")
 
 
 async def _request_snapshot(
@@ -368,18 +445,60 @@ async def _request_snapshot(
     target = next((alert for alert in alerts if alert.toolgroup == tg_code), None)
     probability = target.probability if target else input_probability
     risk_grade = target.severity.value.upper() if target else input_risk_grade
+    composite_score = target.composite_score if target else None
+    impact = target.impact if target else None
     if risk_grade not in {"HIGH", "CRITICAL"}:
         return
+    snapshot_time = _snapshot_time_from_state(state)
     try:
         await spring_client.request_snapshot(
             case_id,
             tg_id,
             probability,
             risk_grade,
-            datetime.now(UTC),
+            _detected_at_from_snapshot_time(snapshot_time),
+            simulation_tick=_simulation_tick(snapshot_time),
+            composite_score=composite_score,
+            impact_score=impact.impact_score if impact else None,
+            affected_count=len(impact.affected_tgs) if impact else None,
+            ct_increase_min=impact.ct_increase_min if impact else None,
+            at_risk_lots=impact.at_risk_lots if impact else None,
         )
     except Exception as exc:
         logger.error("Snapshot 요청 실패: case_id=%s error=%s", case_id, exc)
+
+
+def _snapshot_time_from_state(state: dict) -> float | None:
+    kpi_snapshot = state.get("kpi_snapshot") or []
+    if kpi_snapshot:
+        return _as_float(getattr(kpi_snapshot[0], "snapshot_time", None))
+
+    potential_bottlenecks = state.get("potential_bottlenecks") or []
+    if potential_bottlenecks:
+        return _as_float(getattr(potential_bottlenecks[0], "snapshot_time", None))
+
+    return None
+
+
+def _detected_at_from_snapshot_time(snapshot_time: float | None) -> datetime:
+    if snapshot_time is None:
+        return datetime.now(UTC)
+    return _SIM_EPOCH_UTC + timedelta(minutes=snapshot_time)
+
+
+def _simulation_tick(snapshot_time: float | None) -> int | None:
+    if snapshot_time is None:
+        return None
+    return int(round(snapshot_time))
+
+
+def _as_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 async def _store_hitl_case_mapping(case_id: UUID, hitl_token: str | None) -> None:

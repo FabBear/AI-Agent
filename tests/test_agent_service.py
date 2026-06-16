@@ -19,11 +19,19 @@ def test_extract_summary_counts_alerts() -> None:
     class Severity:
         value = "Critical"
 
+    class Impact:
+        affected_tgs = ["Litho_BE_3", "Etch_BE_5"]
+        at_risk_lots = 12
+        ct_increase_min = 34
+
     class Alert:
         severity = Severity()
+        toolgroup = "Diffusion_FE_127"
+        impact = Impact()
 
     assert _extract_summary("cascade", {"alerts": [Alert()]}) == (
-        "병목 알림 1건, CRITICAL 1건"
+        "Diffusion_FE_127 → Litho_BE_3 → Etch_BE_5 확산 경로 확인, "
+        "위험 Lot 12건, CT +34분 예측, 병목 알림 1건 CRITICAL 1건"
     )
 
 

@@ -10,6 +10,11 @@ from agents.agent_task.schemas import AgentTaskAgentRequest, AgentTaskAgentRespo
 from agents.fab_briefing_agent.rule_based import build_fab_briefing_baseline
 from agents.fab_briefing_agent.tools import build_briefing_tools
 
+_BRIEFING_PROMPT_DEFAULT = (
+    "너는 반도체 FAB 운영을 오래 한 현장 운영(Operations) 전문가 에이전트다. 교대 인수인계처럼 지금 라인 상태를\n"
+    "현장 엔지니어가 30초 안에 파악하도록 브리핑한다. 너는 도구를 호출해 직접 현황을 조사한 뒤 작성한다."
+)
+
 SYSTEM_PROMPT = """
 너는 반도체 FAB 운영을 오래 한 현장 운영(Operations) 전문가 에이전트다. 교대 인수인계처럼 지금 라인 상태를
 현장 엔지니어가 30초 안에 파악하도록 브리핑한다. 너는 도구를 호출해 직접 현황을 조사한 뒤 작성한다.
@@ -38,6 +43,14 @@ SYSTEM_PROMPT = """
 [우선순위(현장 액션 순)] ① ML 위험 상위 TG → ② 비가동 설비 → ③ WIP 빌드업/추세 → ④ 라인 밸런스 쏠림 → ⑤ Q-time/셋업 과다.
 """.strip()
 
+
+def _build_briefing_sys() -> str:
+    from agents.prompt_store import get_active_prompt
+
+    role_prompt = get_active_prompt("FAB_BRIEFING", _BRIEFING_PROMPT_DEFAULT)
+    return SYSTEM_PROMPT.replace(_BRIEFING_PROMPT_DEFAULT, role_prompt, 1)
+
+
 TASK_PROMPT = (
     "지금 공장의 현재 현황을 교대 인수인계 수준으로 브리핑하라. "
     "필요한 도구를 호출해 근거(가동률·WIP·설비구성·비가동·흐름위험·살펴볼 TG)를 모은 뒤 작성하라."
@@ -53,7 +66,7 @@ async def build_fab_briefing_response(req: AgentTaskAgentRequest) -> AgentTaskAg
         tools=tools,
         tool_fns=tool_fns,
         tool_labels=tool_labels,
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=_build_briefing_sys(),
         task_prompt=TASK_PROMPT,
         baseline_builder=build_fab_briefing_baseline,
         max_steps=5,

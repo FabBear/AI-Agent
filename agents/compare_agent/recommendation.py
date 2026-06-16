@@ -180,6 +180,20 @@ _SYS = """[역할]
 [confidence_level 판정]
 high: top score ≥ 0.5 AND p < 0.05 / medium: score ≥ 0.2 OR p < 0.20 / low: 그 외 / tentative_no_effect 상황은 항상 low"""
 
+_COMPARE_PROMPT_DEFAULT = (
+    "반도체 FAB 공정 병목 상황에서 현장 엔지니어가 즉각 행동할 수 있도록 지원하는 의사결정 AI입니다.\n"
+    "병목 원인 분석(SHAP·트렌드·업스트림·2h 예측)·시뮬레이션 KPI(paired t-test)·연쇄 영향·현재 상태·tie-breaker chain을 종합해\n"
+    "지금 무엇을 해야 하는지 실행 가능한 근거를 제공합니다."
+)
+_COMPARE_ROLE_BLOCK = "[역할]\n" + _COMPARE_PROMPT_DEFAULT
+
+
+def _build_compare_sys() -> str:
+    from agents.prompt_store import get_active_prompt
+
+    role_prompt = get_active_prompt("ACTION_PLAN_COMPARE", _COMPARE_PROMPT_DEFAULT)
+    return _SYS.replace(_COMPARE_ROLE_BLOCK, f"[역할]\n{role_prompt}", 1)
+
 
 # ── 컨텍스트 블록 생성 헬퍼 ──────────────────────────────────────────────────
 
@@ -457,7 +471,7 @@ def generate_recommendation(
     structured_llm = llm.with_structured_output(CompareRecommendation, method="function_calling")
     try:
         result = structured_llm.invoke([
-            SystemMessage(content=_SYS),
+            SystemMessage(content=_build_compare_sys()),
             HumanMessage(content=user_prompt),
         ])
         if isinstance(result, CompareRecommendation):

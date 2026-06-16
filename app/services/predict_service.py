@@ -2,6 +2,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 
@@ -32,13 +33,24 @@ class PredictionDetail:
     shap_top: list[FeatureContribution]
 
 
+@dataclass(frozen=True)
+class ModelLoadStatus:
+    model_name: str
+    alias: str
+    loaded_version: str | None
+    source: str
+    last_refresh_at: datetime | None
+
+
 class PredictService:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
         self._booster: xgb.Booster | None = None
         self._model_lock = Lock()
         self._last_refresh = 0.0           # 마지막 refresh 시각(monotonic)
+        self._last_refresh_at: datetime | None = None
         self._loaded_version: str | None = None  # 현재 로드된 MLflow alias 버전(local이면 None)
+        self._loaded_source = "LOCAL_FALLBACK"
 
     def predict(
         self,
@@ -113,7 +125,20 @@ class PredictService:
             booster, version = self._resolve_booster(target_version)
             self._booster = booster
             self._loaded_version = version
+            self._loaded_source = "MLFLOW" if version is not None else "LOCAL_FALLBACK"
+            self._last_refresh_at = datetime.now(UTC)
             return self._booster
+
+    def model_status(self) -> ModelLoadStatus:
+        """Return the model currently used by serving, forcing initial load if needed."""
+        self._load_model()
+        return ModelLoadStatus(
+            model_name=self._settings.mlflow_model_name,
+            alias=self._settings.mlflow_model_stage.lower(),
+            loaded_version=self._loaded_version,
+            source=self._loaded_source,
+            last_refresh_at=self._last_refresh_at,
+        )
 
     def _current_production_version(self) -> str | None:
         """Registry에서 현재 production alias 버전 번호를 조회(실패 시 None)."""
