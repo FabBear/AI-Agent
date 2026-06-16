@@ -135,8 +135,7 @@ async def receive_hitl_result(
         request.comment,
         pool,
     )
-    next_step = "REPORT_GENERATION" if request.decision == HitlDecision.APPROVED else "CLOSED"
-    return success(HitlResult(case_id=request.case_id, next_step=next_step))
+    return success(HitlResult(case_id=request.case_id, next_step="REPORT_GENERATION"))
 
 
 @router.get("/cases/{case_id}/progress", response_model=ApiResponse[ProgressResult])

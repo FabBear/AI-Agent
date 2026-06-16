@@ -162,30 +162,27 @@ async def run_post_hitl(
     step_repo = AgentStepRepository(pool)
     report_repo = ResponseReportRepository(pool)
     spring_client = get_spring_client()
+    is_rejected = decision == "REJECTED"
 
-    if decision == "REJECTED":
-        await step_repo.mark_done(case_id, "hitl", "관리자 반려")
-        await step_repo.mark_done(case_id, "report", "반려로 인한 종료")
-        await spring_client.notify_agent_step(case_id, "hitl", "관리자 반려")
-        await spring_client.notify_agent_step(case_id, "report", "반려로 인한 종료")
-        return
-
-    if selected_plan_id is None:
+    if not is_rejected and selected_plan_id is None:
         raise ValueError("승인 결정에는 selected_plan_id가 필요합니다.")
 
-    await step_repo.mark_done(case_id, "hitl", "관리자 승인")
+    await step_repo.mark_done(case_id, "hitl", "관리자 반려" if is_rejected else "관리자 승인")
     await step_repo.mark_in_progress(case_id, "report")
     try:
         pending = await asyncio.to_thread(_load_pending_state, case_id)
-        selected_plan = await ActionPlanRepository(pool).find_by_id(case_id, selected_plan_id)
-        if selected_plan is None:
-            raise ValueError("선택한 대응안을 찾을 수 없습니다.")
+        selected_plan = None
+        if not is_rejected:
+            selected_plan = await ActionPlanRepository(pool).find_by_id(case_id, selected_plan_id)
+            if selected_plan is None:
+                raise ValueError("선택한 대응안을 찾을 수 없습니다.")
         state = _reconstruct_report_state(
             pending,
             selected_plan,
             decided_by,
             decided_at,
             comment,
+            decision=decision,
         )
         tg_code = str((pending.get("compare_formatted") or [{}])[0].get("toolgroup", ""))
         state["historical_context"] = await _fetch_historical_context(pool, tg_code)
@@ -410,31 +407,45 @@ def _load_pending_state(case_id: UUID) -> dict:
 
 def _reconstruct_report_state(
     pending: dict,
-    selected_plan: dict,
+    selected_plan: dict | None,
     decided_by: UUID,
     decided_at: datetime,
     comment: str | None,
+    decision: str = "APPROVED",
 ) -> dict:
-    selected_label = chr(ord("A") + int(selected_plan["plan_seq"]) - 1)
+    is_rejected = decision == "REJECTED"
+    selected_label = (
+        None
+        if selected_plan is None
+        else chr(ord("A") + int(selected_plan["plan_seq"]) - 1)
+    )
     approval_info = {
-        "status": "승인",
+        "status": "반려" if is_rejected else "승인",
         "approved_by": str(decided_by),
         "approved_role": "ROLE_ADMIN",
         "approved_at": decided_at.isoformat(),
-        "comment": comment or "승인",
-        "rejection_reason": None,
+        "comment": comment or ("반려" if is_rejected else "승인"),
+        "rejection_reason": (comment or "관리자 반려") if is_rejected else None,
+        "selected_label": selected_label,
     }
     compare_results = []
     for formatted in pending.get("compare_formatted", []):
         recommendation = dict(formatted.get("recommendation") or {})
-        recommendation["action_label"] = selected_label
-        recommendation["reason"] = (
-            recommendation.get("reason")
-            or f"{selected_label} 대응안 관리자 승인"
-        )
+        if selected_label:
+            recommendation["action_label"] = selected_label
+            recommendation["reason"] = (
+                recommendation.get("reason")
+                or f"{selected_label} 대응안 관리자 승인"
+            )
+        else:
+            recommendation["reason"] = (
+                recommendation.get("reason")
+                or "관리자 반려로 승인된 대응안 없음"
+            )
         compare_results.append(
             {
                 "toolgroup": formatted["toolgroup"],
+                "result_v2": formatted.get("result_v2"),
                 "recommendation": recommendation,
                 "approval_info": approval_info,
                 "action_effects": formatted.get("action_effects", []),
@@ -459,7 +470,7 @@ def _reconstruct_report_state(
         "cascade_report": pending.get("cascade_report"),
         "current_release_interval": None,
         "solution_candidates": pending.get("solution_candidates", []),
-        "hitl_approved": True,
+        "hitl_approved": not is_rejected,
         "hitl_token": pending.get("hitl_token"),
         "verification_results": [],
         "compare_inputs": [],
