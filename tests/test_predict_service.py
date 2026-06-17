@@ -59,7 +59,7 @@ def test_predict_service_model_status_reports_local_fallback(monkeypatch) -> Non
 
     status = service.model_status()
 
-    assert status.model_name == "FabGuard_Bottleneck_Model"
+    assert status.model_name == "FabBear_Bottleneck_Model"
     assert status.alias == "production"
     assert status.loaded_version is None
     assert status.source == "LOCAL_FALLBACK"
