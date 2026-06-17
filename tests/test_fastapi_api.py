@@ -221,7 +221,7 @@ async def test_model_status_returns_current_serving_model(client: AsyncClient) -
     class FakePredictService:
         def model_status(self):
             return SimpleNamespace(
-                model_name="FabGuard_Bottleneck_Model",
+                model_name="FabBear_Bottleneck_Model",
                 alias="production",
                 loaded_version="7",
                 source="MLFLOW",
@@ -233,7 +233,7 @@ async def test_model_status_returns_current_serving_model(client: AsyncClient) -
 
     assert response.status_code == 200
     assert response.json()["data"] == {
-        "modelName": "FabGuard_Bottleneck_Model",
+        "modelName": "FabBear_Bottleneck_Model",
         "alias": "production",
         "loadedVersion": "7",
         "source": "MLFLOW",

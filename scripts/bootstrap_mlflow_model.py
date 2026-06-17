@@ -97,7 +97,7 @@ def _register_model(
     booster = xgb.Booster()
     booster.load_model(str(model_path))
 
-    mlflow.set_experiment(os.environ.get("MLFLOW_EXPERIMENT_NAME", "FabGuard_Bottleneck_Prediction"))
+    mlflow.set_experiment(os.environ.get("MLFLOW_EXPERIMENT_NAME", "FabBear_Bottleneck_Prediction"))
     with mlflow.start_run(run_name="seed-production-model") as run:
         run_id = run.info.run_id
         metrics = train_meta.get("metrics", {})

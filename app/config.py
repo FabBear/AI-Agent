@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     qdrant_collection_cases: str = "bottleneck_cases"
     mlflow_tracking_uri: str = "http://localhost:5500"
     # [MLOps] MLflow Registry에서 끌어올 모델/스테이지 및 교체(refresh) 주기(초)
-    mlflow_model_name: str = "FabGuard_Bottleneck_Model"
+    mlflow_model_name: str = "FabBear_Bottleneck_Model"
     mlflow_model_stage: str = "Production"
     model_refresh_interval_sec: int = 300
     agent_csv_dir: str = "../Simulation/simulation/sim_csv_out"
