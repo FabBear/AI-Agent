@@ -194,6 +194,7 @@ def _build_draft_item(compare_result: dict, alert, kpi, prev_kpi, cause_report, 
                 "secondary_causes": j.secondary_causes,
                 "dismissed": j.dismissed,
                 "dismissed_reason": j.dismissed_reason,
+                "cause_summary": j.cause_summary,
             }
 
         evidence_list: list[dict] = [
@@ -346,11 +347,14 @@ def report_prepare(state: "PipelineState") -> dict:
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         sev = item["severity"]
         badge = {"Critical": "🚨 CRITICAL", "High": "🔴 HIGH", "Medium": "🟡 MEDIUM", "Low": "🟢 LOW"}.get(sev, sev)
+        area_name = getattr(report_v2.meta, "area_name", None)
+        area_row = f"| 구역명 | `{area_name}` |\n" if area_name else ""
         item["section_header"] = (
             f"# FAB 병목 대응 보고서\n\n"
             f"| 항목 | 내용 |\n"
             f"|------|------|\n"
             f"| 공정명 | `{item['process_name']}` |\n"
+            f"{area_row}"
             f"| 심각도 | **{badge}** |\n"
             f"| 탐지시각 | {item['detected_at']} |\n"
             f"| 보고서 생성일시 | {now} |\n\n"

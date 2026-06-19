@@ -171,7 +171,7 @@ def _pick_ui(ui_cards: dict, ui_type: str, tools_used: list[str] | None = None) 
     """하이브리드: LLM이 고른 카드 우선. 마커 누락 시 **마지막에 만들어진 카드**로 폴백
     (insertion order = LLM이 실제 마지막에 호출한 도구 → 질문과 가장 관련 높음)."""
     tools_used = tools_used or []
-    lot_tools = {"get_lot_status", "get_top_toolgroups", "get_tool_status"}
+    lot_tools = {"get_lot_status", "get_lot_release_plan", "get_top_toolgroups", "get_tool_status"}
     if "lot" in ui_cards and lot_tools.intersection(tools_used) and ui_type in ("", "status", "lot"):
         return ui_cards["lot"]
     ui = ui_cards.get(ui_type)

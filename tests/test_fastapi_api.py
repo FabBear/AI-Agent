@@ -68,11 +68,33 @@ async def test_agent_run_returns_accepted(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_prompt_cache_invalidate_calls_prompt_store(client: AsyncClient, monkeypatch) -> None:
+    called: dict[str, str | None] = {}
+
+    def fake_invalidate(category: str | None = None) -> None:
+        called["category"] = category
+
+    monkeypatch.setattr("app.api.agent.invalidate_prompt_cache", fake_invalidate)
+    response = await client.post(
+        "/api/agent/prompts/cache/invalidate",
+        headers=internal_token_headers(),
+        json={"category": "ACTION_PLAN_GEN"},
+    )
+
+    assert response.status_code == 200
+    assert called == {"category": "ACTION_PLAN_GEN"}
+    assert response.json() == {
+        "success": True,
+        "data": {"category": "ACTION_PLAN_GEN", "scope": "CATEGORY"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_user_invoked_agent_task_returns_structured_result(client: AsyncClient) -> None:
     task_id = str(uuid4())
     tg_id = str(uuid4())
     response = await client.post(
-        "/api/agent/tasks",
+        "/api/agent/fab-briefing",
         headers=internal_token_headers(),
         json={
             "taskId": task_id,
@@ -106,10 +128,6 @@ async def test_user_invoked_agent_task_returns_structured_result(client: AsyncCl
     assert body["status"] == "SUCCEEDED"
     assert body["result"]["references"]["tgIds"] == [tg_id]
     assert "BACKEND_AUTHORITATIVE_TG" in body["result"]["summary"]
-
-    follow_up = await client.get(f"/api/agent/tasks/{task_id}", headers=internal_token_headers())
-    assert follow_up.status_code == 200
-    assert follow_up.json()["result"]["summary"] == body["result"]["summary"]
 
 
 @pytest.mark.asyncio

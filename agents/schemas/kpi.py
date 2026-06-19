@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, model_validator
 
 class ToolGroupKPI(BaseModel):
     toolgroup: str
+    area_name: str | None = None
     snapshot_time: float
     available_tool_ratio: float = Field(ge=0.0, le=1.0)
     q_time_min: float = Field(ge=0.0)

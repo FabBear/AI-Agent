@@ -28,6 +28,10 @@ def _parse_meta_from_md(text: str) -> dict:
     if m:
         meta["tg_code"] = m.group(1).strip()
 
+    m = re.search(r"\|\s*구역명\s*\|\s*`?([^`|\n]+)`?\s*\|", text)
+    if m:
+        meta["area_name"] = m.group(1).strip()
+
     m = re.search(
         r"\|\s*심각도\s*\|[^|]*?(Critical|High|Medium|Low)",
         text,
@@ -85,7 +89,7 @@ def case_recorder(state: "PipelineState") -> dict:
             service.index_case(
                 case_id=md_path.stem,
                 tg_code=meta.get("tg_code", ""),
-                area_name="",
+                area_name=meta.get("area_name", ""),
                 detected_at=meta.get("detected_at", ""),
                 bottleneck_cause_type=meta.get("bottleneck_cause_type", ""),
                 risk_grade=meta.get("risk_grade", ""),

@@ -1,5 +1,4 @@
-"""챗 어시스턴트 도구용 읽기 쿼리 — 추세(ps_tg_metrics)·구역 WIP 현황·병목 케이스(tt_bottleneck_case).
-개별 Lot 테이블은 스키마에 없어 'lot 현황'은 구역별 WIP·대기·Q-time 집계로 제공한다."""
+"""챗 어시스턴트 도구용 읽기 쿼리 — 추세(ps_tg_metrics)·구역 WIP 현황·Lot 투입계획·병목 케이스."""
 
 from uuid import UUID
 
@@ -9,6 +8,170 @@ import asyncpg
 class ChatQueryRepository:
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
+
+    _RELEASE_LEDGER_CTE = """
+        WITH anchor AS (
+            SELECT
+                measured_at,
+                FLOOR(EXTRACT(EPOCH FROM (measured_at - TIMESTAMPTZ '2020-01-01 00:00:00+09')) / 60)::integer
+                    AS anchor_step
+            FROM ps_fab_metrics
+            WHERE fab_id = $1
+            ORDER BY measured_at DESC
+            LIMIT 1
+        ),
+        ledger AS (
+            SELECT
+                run_id,
+                scenario_id,
+                lot_id,
+                lot_type,
+                product_name,
+                route_name,
+                sim_now_min AS release_min,
+                due_date_sim_min AS due_min,
+                priority,
+                COALESCE(is_super_hot, FALSE) AS is_super_hot,
+                wafers_per_lot,
+                source
+            FROM simulation.lot_release_ledger
+        ),
+        primary_run AS (
+            SELECT run_id
+            FROM ledger
+            WHERE release_min IS NOT NULL
+            GROUP BY run_id
+            ORDER BY COUNT(*) DESC
+            LIMIT 1
+        )
+    """
+
+    async def lot_release_plan(self, fab_id: UUID, window_min: int | None, bucket_min: int, limit: int) -> dict | None:
+        """Lot 투입계획 요약/버킷/제품 구성/핫랏을 조회한다. 백엔드 ReleasePlanDao와 같은 원천 테이블 기준."""
+        summary = await self._pool.fetchrow(
+            self._RELEASE_LEDGER_CTE + """
+            SELECT
+                (SELECT measured_at FROM anchor) AS anchor_measured_at,
+                (SELECT anchor_step FROM anchor) AS anchor_step,
+                (SELECT run_id FROM primary_run) AS source_run_id,
+                COALESCE(COUNT(*) FILTER (
+                    WHERE l.release_min >= anchor.anchor_step
+                      AND ($2::integer IS NULL OR l.release_min < anchor.anchor_step + $2::integer)
+                ), 0) AS planned_lots,
+                COALESCE(SUM(COALESCE(l.wafers_per_lot, 0)) FILTER (
+                    WHERE l.release_min >= anchor.anchor_step
+                      AND ($2::integer IS NULL OR l.release_min < anchor.anchor_step + $2::integer)
+                ), 0) AS planned_wafers,
+                COALESCE(COUNT(*) FILTER (
+                    WHERE l.release_min >= anchor.anchor_step
+                      AND ($2::integer IS NULL OR l.release_min < anchor.anchor_step + $2::integer)
+                      AND (
+                          COALESCE(l.priority, 0) >= 20
+                          OR l.is_super_hot
+                          OR LOWER(COALESCE(l.lot_type, '')) LIKE '%hot%'
+                      )
+                ), 0) AS priority_lots,
+                COALESCE(COUNT(*) FILTER (
+                    WHERE l.release_min >= anchor.anchor_step
+                      AND ($2::integer IS NULL OR l.release_min < anchor.anchor_step + $2::integer)
+                      AND l.is_super_hot
+                ), 0) AS super_hot_lots,
+                COALESCE(COUNT(*) FILTER (
+                    WHERE l.due_min >= anchor.anchor_step
+                      AND ($2::integer IS NULL OR l.due_min < anchor.anchor_step + $2::integer)
+                ), 0) AS due_lots,
+                MIN(l.release_min - anchor.anchor_step) FILTER (
+                    WHERE l.release_min >= anchor.anchor_step
+                      AND ($2::integer IS NULL OR l.release_min < anchor.anchor_step + $2::integer)
+                ) AS next_release_in_min,
+                AVG(l.due_min - l.release_min) FILTER (
+                    WHERE l.release_min >= anchor.anchor_step
+                      AND l.due_min IS NOT NULL
+                      AND ($2::integer IS NULL OR l.release_min < anchor.anchor_step + $2::integer)
+                ) AS avg_due_slack_min
+            FROM anchor
+            LEFT JOIN ledger l ON TRUE
+            LEFT JOIN primary_run pr ON pr.run_id = l.run_id
+            WHERE pr.run_id IS NOT NULL OR l.run_id IS NULL
+            """,
+            fab_id, window_min,
+        )
+        if summary is None or summary["anchor_step"] is None or summary["source_run_id"] is None:
+            return None
+
+        buckets = await self._pool.fetch(
+            self._RELEASE_LEDGER_CTE + """
+            SELECT
+                FLOOR((l.release_min - anchor.anchor_step) / $3::integer)::integer AS bucket_index,
+                MIN(l.release_min - anchor.anchor_step) AS from_min,
+                MAX(l.release_min - anchor.anchor_step) AS to_min,
+                COUNT(*) AS total_lots,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(l.priority, 0) >= 20
+                       OR l.is_super_hot
+                       OR LOWER(COALESCE(l.lot_type, '')) LIKE '%hot%'
+                ) AS priority_lots
+            FROM anchor
+            JOIN ledger l ON TRUE
+            JOIN primary_run pr ON pr.run_id = l.run_id
+            WHERE l.release_min >= anchor.anchor_step
+              AND ($2::integer IS NULL OR l.release_min < anchor.anchor_step + $2::integer)
+            GROUP BY bucket_index
+            ORDER BY bucket_index
+            """,
+            fab_id, window_min, bucket_min,
+        )
+        product_mix = await self._pool.fetch(
+            self._RELEASE_LEDGER_CTE + """
+            SELECT COALESCE(l.product_name, '미지정') AS name, COUNT(*) AS lots
+            FROM anchor
+            JOIN ledger l ON TRUE
+            JOIN primary_run pr ON pr.run_id = l.run_id
+            WHERE l.release_min >= anchor.anchor_step
+              AND ($2::integer IS NULL OR l.release_min < anchor.anchor_step + $2::integer)
+            GROUP BY name
+            ORDER BY lots DESC, name ASC
+            LIMIT $3
+            """,
+            fab_id, window_min, limit,
+        )
+        hot_lots = await self._pool.fetch(
+            self._RELEASE_LEDGER_CTE + """
+            SELECT
+                l.lot_id,
+                l.product_name,
+                l.route_name,
+                l.lot_type,
+                l.priority,
+                l.is_super_hot,
+                l.release_min - anchor.anchor_step AS release_in_min,
+                l.due_min - anchor.anchor_step AS due_in_min
+            FROM anchor
+            JOIN ledger l ON TRUE
+            JOIN primary_run pr ON pr.run_id = l.run_id
+            WHERE l.release_min >= anchor.anchor_step
+              AND ($2::integer IS NULL OR l.release_min < anchor.anchor_step + $2::integer)
+              AND (
+                  COALESCE(l.priority, 0) >= 20
+                  OR l.is_super_hot
+                  OR LOWER(COALESCE(l.lot_type, '')) LIKE '%hot%'
+              )
+            ORDER BY
+                l.is_super_hot DESC,
+                (l.due_min - anchor.anchor_step) ASC NULLS LAST,
+                l.release_min ASC,
+                COALESCE(l.priority, 0) DESC,
+                l.lot_id ASC
+            LIMIT $3
+            """,
+            fab_id, window_min, limit,
+        )
+        return {
+            "summary": summary,
+            "buckets": buckets,
+            "product_mix": product_mix,
+            "hot_lots": hot_lots,
+        }
 
     async def kpi_trend(
         self, fab_id: UUID, area: str, hours: int, bucket_min: int, group_by: str = "area",
@@ -112,9 +275,15 @@ class ChatQueryRepository:
         return await self._pool.fetch(
             """
             SELECT p.plan_seq, p.plan_type, p.plan_title, p.plan_detail,
-                   p.est_throughput_delta, p.est_avg_wait_delta,
-                   p.est_delivery_compliance_delta, p.est_delay_delta,
-                   p.actual_throughput_delta, p.actual_avg_wait_delta, p.validated_at,
+                   p.est_util_delta, p.est_q_time_delta, p.est_wip_delta, p.est_wait_ratio_delta,
+                   p.sim_paired_n, p.sim_paired_p_value,
+                   p.est_util_delta AS est_throughput_delta,
+                   p.est_q_time_delta AS est_avg_wait_delta,
+                   NULL::numeric AS est_delivery_compliance_delta,
+                   NULL::numeric AS est_delay_delta,
+                   p.actual_throughput_delta, p.actual_avg_wait_delta,
+                   p.actual_delivery_compliance_delta, p.actual_delay_delta,
+                   p.validated_at,
                    COALESCE(p.plan_id = h.selected_plan_id, FALSE) AS selected
             FROM td_action_plan p
             LEFT JOIN LATERAL (

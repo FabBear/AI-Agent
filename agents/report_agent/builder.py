@@ -201,11 +201,13 @@ def build_meta(
     detected_at: str,
     snapshot_time: float | None = None,
     horizon_min: int | None = None,
+    area_name: str | None = None,
 ) -> Meta:
     sev = alert.severity.value
     return Meta(
         toolgroup=tg,
         process_name=tg,
+        area_name=area_name,
         severity=sev,
         severity_token=_SEVERITY_TOKEN.get(sev, SeverityToken.OK),
         severity_priority=_SEVERITY_PRIORITY.get(sev, 3),
@@ -488,6 +490,9 @@ def build_diffusion(
         line_stop_expected_min=_round(alert.impact.ct_increase_min, 1),
         risk_level=sev,
         risk_level_token=_SEVERITY_TOKEN.get(sev, SeverityToken.OK),
+        at_risk_lots=_round(alert.impact.at_risk_lots, 1),
+        impact_pct=_round(alert.impact.impact_score * 100, 1),
+        affected_toolgroups=list(affected_tgs),
         high_impact_processes=high_top,
         low_impact_processes=high[8:] + low,
         forward_simulation=fwd,
@@ -677,6 +682,7 @@ def _split_params(params: dict) -> ActionParams | None:
         release_interval=_split_release_interval(params),
         lot_priority_rule=params.get("lot_priority_rule"),
         superhotlot_enable=params.get("superhotlot_enable"),
+        lot_adjustments=list(params.get("lot_adjustments") or []),
     )
 
 
@@ -764,16 +770,44 @@ def _build_candidate(opt: dict, approved_label: str | None) -> ActionCandidate:
     )
 
 
-def _build_recommendation_block(rec: dict) -> Recommendation | None:
+def _build_recommendation_block(
+    rec: dict,
+    candidates: list[ActionCandidate] | None = None,
+    approved_label: str | None = None,
+    approval: dict | None = None,
+) -> Recommendation | None:
     if not rec:
         return None
     why_recommended = rec.get("why_recommended") or {}
+    approved = None
+    for candidate in candidates or []:
+        if approved_label and candidate.label == approved_label:
+            approved = candidate
+            break
+    if approved is None:
+        approved = next((candidate for candidate in candidates or [] if not candidate.is_baseline), None)
+
+    primary_reason = str(rec.get("primary_reason") or rec.get("reason") or "")
+    tradeoffs = list(rec.get("tradeoffs") or [])
+    effect_parts = [text for text in [primary_reason] if text]
+    if tradeoffs:
+        effect_parts.append("리스크/트레이드오프: " + " · ".join(str(t) for t in tradeoffs))
+
     return Recommendation(
         headline=str(rec.get("headline") or ""),
-        primary_reason=str(rec.get("primary_reason") or rec.get("reason") or ""),
+        primary_reason=primary_reason,
+        plan_description=str(rec.get("plan_description") or (approved.description if approved else "") or "") or None,
+        effect_and_risk=str(rec.get("effect_and_risk") or " ".join(effect_parts) or "") or None,
+        approval_reason=str(
+            rec.get("approval_reason")
+            or (approval or {}).get("comment")
+            or (approval or {}).get("rejection_reason")
+            or primary_reason
+            or ""
+        ) or None,
         confidence_level=rec.get("confidence_level"),
         confidence_token=_CONFIDENCE_TOKEN.get(rec.get("confidence_level")),
-        tradeoffs=list(rec.get("tradeoffs") or []),
+        tradeoffs=tradeoffs,
         why_not_others=[
             WhyNotOther(label=str(k), reason=str(v))
             for k, v in (rec.get("why_not_others") or {}).items()
@@ -864,7 +898,7 @@ def build_actions(normalized: dict) -> Actions:
         equivalent_set=list(dm.get("equivalent_set") or []),
         approved_label=approved_label if available else None,
         candidates=candidates,
-        recommendation=_build_recommendation_block(rec),
+        recommendation=_build_recommendation_block(rec, candidates, approved_label, approval),
         playbook=_build_playbook(rec),
     )
 
@@ -951,7 +985,14 @@ def build_report_v2(
     compare_meta = normalized_compare.get("meta") or {}
     horizon_min = _safe_int(compare_meta.get("horizon_min")) or 120
 
-    meta = build_meta(tg, alert, detected_at, snapshot_time, horizon_min)
+    meta = build_meta(
+        tg,
+        alert,
+        detected_at,
+        snapshot_time,
+        horizon_min,
+        area_name=compare_meta.get("area_name") or compare_meta.get("areaName"),
+    )
     approval = build_approval(normalized_compare.get("approval_info") or {})
     risk = build_risk(alert)
     confidence = build_confidence(cause_report)

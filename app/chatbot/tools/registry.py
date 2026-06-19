@@ -12,6 +12,7 @@ from app.chatbot.tools import (
     knowledge,
     kpi_trend,
     lot_status,
+    release_plan,
     tool_activity,
 )
 
@@ -22,6 +23,7 @@ TOOL_LABELS = {
     "get_top_toolgroups": "툴그룹 순위 조회 중",
     "get_tool_status": "설비 현황 조회 중",
     "get_lot_status": "WIP·대기 현황 조회 중",
+    "get_lot_release_plan": "Lot 투입계획 조회 중",
     "search_bottleneck_cases": "병목 케이스 조회 중",
     "get_case_detail": "케이스 상세 조회 중",
     "get_tool_activity": "설비 활동 추이 조회 중",
@@ -47,6 +49,9 @@ def build_tools(ctx: ChatContext) -> tuple[list, dict]:
 
     async def get_lot_status(area: str = "") -> str:
         return await lot_status.get_lot_status(ctx, area)
+
+    async def get_lot_release_plan(range: str = "24h", days: int = 0, limit: int = 6) -> str:
+        return await release_plan.get_lot_release_plan(ctx, range, days, limit)
 
     async def get_top_toolgroups(area: str = "", metric: str = "util", order: str = "desc", limit: int = 5) -> str:
         return await lot_status.get_top_toolgroups(ctx, area, metric, order, limit)
@@ -95,6 +100,11 @@ def build_tools(ctx: ChatContext) -> tuple[list, dict]:
             description="구역/TG별 WIP·대기·Q-time 현황. '어디가 막혀있나/적체/밀림/쌓임/대기 Lot 많은 곳' 등 지금 물량이 몰린 위치 질문에 사용. area=구역명(생략 시 전체).",
         ),
         StructuredTool.from_function(
+            coroutine=get_lot_release_plan,
+            name="get_lot_release_plan",
+            description="향후 Lot 투입계획/투입 스케줄 조회. 'Lot 투입계획', 'lot 스케줄', '이번 7일/이번 주 투입', '향후 24시간/48시간/30일 release plan' 질문에 사용. range는 24h/48h/7d/30d/all 중 하나, days는 사용자가 일수로 말한 경우 입력.",
+        ),
+        StructuredTool.from_function(
             coroutine=search_bottleneck_cases,
             name="search_bottleneck_cases",
             description="ML이 과거에 감지한 병목 '이벤트 이력'(케이스 기록: 위험등급·확률·상태) 조회 전용. '병목 케이스 있었어/이력/감지 기록' 질문에만 사용. 케이스 1건의 원인·대응안 상세는 get_case_detail, 지금 어디가 막혔는지는 get_lot_status를 써라.",
@@ -123,6 +133,7 @@ def build_tools(ctx: ChatContext) -> tuple[list, dict]:
         "get_top_toolgroups": get_top_toolgroups,
         "get_tool_status": get_tool_status,
         "get_lot_status": get_lot_status,
+        "get_lot_release_plan": get_lot_release_plan,
         "search_bottleneck_cases": search_bottleneck_cases,
         "get_case_detail": get_case_detail,
         "get_tool_activity": get_tool_activity,

@@ -101,6 +101,7 @@ class KpiChange(_Base):
 class Meta(_Base):
     toolgroup: str
     process_name: str
+    area_name: str | None = None
     severity: str                           # 원본 enum 값
     severity_token: SeverityToken
     severity_priority: int                  # 0=danger ~ 3=ok
@@ -204,6 +205,9 @@ class Diffusion(_Base):
     line_stop_expected_min: float | None = None
     risk_level: str                         # 원본 severity
     risk_level_token: SeverityToken
+    at_risk_lots: float | int | None = None
+    impact_pct: float | None = None
+    affected_toolgroups: list[str] = []
     high_impact_processes: list[AffectedProcess] = []
     low_impact_processes: list[AffectedProcess] = []
     forward_simulation: ForwardSimulation = Field(default_factory=ForwardSimulation)
@@ -330,10 +334,23 @@ class ReleaseIntervalParam(_Base):
     unit: str = "min"
 
 
+class LotAdjustmentParam(_Base):
+    lot_plan_id: int | None = None
+    lot_type: str | None = None
+    product_name: str | None = None
+    release_time: float | None = None
+    whatif_release_time: float | None = None
+    action_kind: str | None = None
+    priority: int | None = None
+    time_to_due: float | None = None
+    zone: str | None = None
+
+
 class ActionParams(_Base):
     release_interval: ReleaseIntervalParam | None = None
     lot_priority_rule: str | None = None
     superhotlot_enable: bool | None = None
+    lot_adjustments: list[LotAdjustmentParam] = []
 
 
 class KpiImpactItem(_Base):
@@ -391,6 +408,9 @@ class WhyNotOther(_Base):
 class Recommendation(_Base):
     headline: str = ""
     primary_reason: str = ""
+    plan_description: str | None = None
+    effect_and_risk: str | None = None
+    approval_reason: str | None = None
     confidence_level: str | None = None
     confidence_token: ConfidenceToken | None = None
     tradeoffs: list[str] = []

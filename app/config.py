@@ -20,7 +20,10 @@ class Settings(BaseSettings):
     agent_csv_dir: str = "../Simulation/simulation/sim_csv_out"
     model_dir: str = "models"
     agent_step_timeout_sec: int = 30
-    pipeline_timeout_sec: int = 1200
+    pipeline_timeout_sec: int = 3600
+    # 케이스 병렬 처리 수. 실제 sim 부하는 sim_executor의 전역 세마포어(VERIFY_MAX_CONCURRENT_SIMS)가
+    # 캡하므로 케이스를 병렬로 풀어도 동시 sim은 그 값을 안 넘는다. 1로 두면 케이스가 순차라 느림.
+    max_concurrent_pipelines: int = 8
     risk_critical_threshold: float = 0.90
     risk_high_threshold: float = 0.85
     risk_medium_threshold: float = 0.70

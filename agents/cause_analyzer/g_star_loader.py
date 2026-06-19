@@ -93,7 +93,59 @@ def load_g_star(t0: float, out_dir: Path | None = None) -> GStarResult | None:
             if evidence_path.exists():
                 result.kpi_evidence = _load_evidence(evidence_path)
 
+        # 현재 handoff는 CSV 경로 대신 inline JSON 배열로 KPI evidence를 싣는다.
+        if not result.kpi_evidence:
+            result.kpi_evidence = _load_evidence_records(gsa.get("g_star_kpi_evidence", []))
+
     return result
+
+
+def _load_evidence_records(records: list[dict]) -> dict[str, list[KpiEvidence]]:
+    """inline JSON records → {toolgroup: [KpiEvidence]} 딕셔너리."""
+    evidence: dict[str, list[KpiEvidence]] = {}
+    if not isinstance(records, list):
+        return evidence
+
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        tg = str(row.get("toolgroup", ""))
+        kpi = str(row.get("kpi", ""))
+        if not tg or not kpi:
+            continue
+        try:
+            ev = KpiEvidence(
+                kpi=kpi,
+                delta_mean=_float_or_default(row.get("delta_mean"), 0.0),
+                t_p_adj=_float_or_default(row.get("t_p_adj"), 1.0),
+                significant=_truthy_int(row.get("kpi_significant")),
+            )
+            evidence.setdefault(tg, []).append(ev)
+        except (ValueError, TypeError):
+            continue
+    return evidence
+
+
+def _float_or_default(value, default: float) -> float:
+    if value is None:
+        return default
+    if isinstance(value, str) and not value.strip():
+        return default
+    return float(value)
+
+
+def _truthy_int(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "t", "yes", "y"):
+            return True
+        if normalized in ("false", "f", "no", "n", ""):
+            return False
+    return bool(int(value))
 
 
 def _load_evidence(path: Path) -> dict[str, list[KpiEvidence]]:

@@ -1,7 +1,19 @@
 import json
+import math
 from uuid import UUID
 
 import asyncpg
+
+
+def _sanitize_nan(obj):
+    """NaN/Inf float를 None으로 치환 — PostgreSQL jsonb 직렬화 전처리."""
+    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    if isinstance(obj, dict):
+        return {k: _sanitize_nan(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_nan(v) for v in obj]
+    return obj
 
 
 class ActionPlanRepository:
@@ -17,7 +29,7 @@ class ActionPlanRepository:
             WHERE case_id = $1
             """,
             case_id,
-            json.dumps(result_v2, ensure_ascii=False),
+            json.dumps(_sanitize_nan(result_v2), ensure_ascii=False),
         )
 
     async def bulk_insert(self, case_id: UUID, candidates: list[dict]) -> None:
@@ -59,7 +71,7 @@ class ActionPlanRepository:
                         self._plan_type(candidate),
                         self._plan_title(candidate, sequence),
                         self._plan_detail(candidate),
-                        json.dumps(candidate, ensure_ascii=False),
+                        json.dumps(_sanitize_nan(candidate), ensure_ascii=False),
                         kpi.get("utilization_avg", {}).get("mean_delta"),
                         kpi.get("q_time_min", {}).get("mean_delta"),
                         kpi.get("wip", {}).get("mean_delta"),
@@ -82,7 +94,7 @@ class ActionPlanRepository:
 
     @staticmethod
     def _plan_type(candidate: dict) -> str:
-        if "release_interval_minutes" in candidate:
+        if "release_interval_minutes" in candidate or "release_interval_delta_pct" in candidate:
             return "LOT_RELEASE_INTERVAL"
         params = candidate.get("params") or {}
         if params.get("dispatch_rule"):
@@ -93,17 +105,27 @@ class ActionPlanRepository:
 
     @staticmethod
     def _plan_title(candidate: dict, sequence: int) -> str:
+        _PLAN_ID_TITLE = {
+            "conservative": "보수적 조정안",
+            "standard": "표준 조정안",
+            "aggressive": "강화 조정안",
+        }
+        plan_id = candidate.get("plan_id", "")
         return str(
             candidate.get("name")
             or candidate.get("description")
-            or candidate.get("plan_id")
+            or _PLAN_ID_TITLE.get(plan_id)
+            or plan_id
             or f"대응안 {sequence}"
         )[:200]
 
     @staticmethod
     def _plan_detail(candidate: dict) -> str:
+        delta = candidate.get("release_interval_delta_pct")
+        if delta is not None:
+            return f"Release Interval Δ{delta}%"
         return str(
             candidate.get("expected_effect")
             or candidate.get("description")
-            or candidate
+            or "대응안"
         )

@@ -36,6 +36,7 @@ class TgMetricsRepository:
             SELECT DISTINCT ON (m.tg_id)
                 m.tg_id,
                 tg.tg_code,
+                a.area_name,
                 m.measured_at,
                 m.utilization_rate,
                 m.wip_count,
@@ -61,11 +62,16 @@ class TgMetricsRepository:
         measured_at = row["measured_at"]
         utilization = float(row["utilization_rate"] or 0)
         q_time = float(row["avg_qtime_min"] or 0)
+        try:
+            area_name = row["area_name"]
+        except (KeyError, IndexError):
+            area_name = None
         return TgMetricSnapshot(
             tg_id=row["tg_id"],
             measured_at=measured_at,
             kpi=ToolGroupKPI(
                 toolgroup=row["tg_code"],
+                area_name=area_name,
                 snapshot_time=measured_at.timestamp() / 60,
                 available_tool_ratio=float(row["available_tool_ratio"] or 0),
                 q_time_min=q_time,

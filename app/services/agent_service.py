@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
@@ -26,6 +27,10 @@ _ROOT = Path(__file__).resolve().parents[2]
 _HITL_PENDING_DIR = _ROOT / "hitl_pending"
 _SIM_EPOCH_UTC = datetime(2019, 12, 31, 15, 0, tzinfo=UTC)
 
+_pipeline_semaphore: asyncio.Semaphore | None = None
+# HITL 승인 후 보고서 생성은 시뮬레이션 파이프라인과 스레드 풀을 공유하지 않도록 전용 executor 사용
+_hitl_report_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="hitl-report")
+
 
 async def run_pipeline_with_timeout(
     case_id: UUID,
@@ -36,35 +41,42 @@ async def run_pipeline_with_timeout(
     risk_grade: str,
     pool: asyncpg.Pool,
 ) -> None:
+    global _pipeline_semaphore
     settings = get_settings()
-    try:
-        await asyncio.wait_for(
-            run_pipeline(
+    if _pipeline_semaphore is None:
+        _pipeline_semaphore = asyncio.Semaphore(settings.max_concurrent_pipelines)
+
+    # Phase 1: cascade 실행 (세마포어 없이 — 모든 케이스가 즉시 확산영향분석을 완료한다)
+    # CRITICAL이면 cascade state를 반환하고 Phase 2로 진행, 아니면 cascade-only로 종료
+    cascade_state = await _run_cascade_phase(
+        case_id, tg_id, tg_code, snapshot_time, bottleneck_prob, risk_grade, pool
+    )
+    if cascade_state is None:
+        return
+
+    # Phase 2: 원인/대응 분석 (세마포어 게이트 — 동시 실행 수 제한)
+    # Phase 1에서 CAUSE_ANALYSIS가 IN_PROGRESS로 마킹됐으므로 화면에 "원인분석 대기중"이 표시된다
+    async with _pipeline_semaphore:
+        try:
+            await asyncio.wait_for(
+                run_pipeline(case_id, tg_id, tg_code, bottleneck_prob, risk_grade, cascade_state, pool),
+                timeout=settings.pipeline_timeout_sec,
+            )
+        except TimeoutError:
+            step_repo = AgentStepRepository(pool)
+            failed_step = await step_repo.mark_active_failed(case_id, "파이프라인 타임아웃")
+            await get_spring_client(settings).notify_agent_step(
                 case_id,
-                tg_id,
-                tg_code,
-                snapshot_time,
-                bottleneck_prob,
-                risk_grade,
-                pool,
-            ),
-            timeout=settings.pipeline_timeout_sec,
-        )
-    except TimeoutError:
-        step_repo = AgentStepRepository(pool)
-        failed_step = await step_repo.mark_active_failed(case_id, "파이프라인 타임아웃")
-        await get_spring_client(settings).notify_agent_step(
-            case_id,
-            failed_step or "DIFFUSION_ANALYSIS",
-            "파이프라인 타임아웃",
-            status="FAILED",
-        )
-        logger.exception("Agent pipeline timeout: case_id=%s", case_id)
-    except Exception:
-        logger.exception("Agent pipeline failed: case_id=%s", case_id)
+                failed_step or "CAUSE_ANALYSIS",
+                "파이프라인 타임아웃",
+                status="FAILED",
+            )
+            logger.exception("Agent pipeline timeout: case_id=%s", case_id)
+        except Exception:
+            logger.exception("Agent pipeline failed: case_id=%s", case_id)
 
 
-async def run_pipeline(
+async def _run_cascade_phase(
     case_id: UUID,
     tg_id: UUID,
     tg_code: str,
@@ -72,59 +84,113 @@ async def run_pipeline(
     bottleneck_prob: float,
     risk_grade: str,
     pool: asyncpg.Pool,
+) -> dict | None:
+    """Phase 1: init_steps + cascade 실행 (세마포어 없이).
+
+    - 모든 케이스가 즉시 확산영향분석을 완료한다.
+    - CRITICAL 확정 시 cascade state를 반환 → Phase 2(세마포어 게이트)로 전달.
+    - non-CRITICAL 또는 오류 시 None 반환 → Phase 2 건너뜀.
+    """
+    step_repo = AgentStepRepository(pool)
+    spring_client = get_spring_client(get_settings())
+
+    await step_repo.init_steps(case_id)
+    await step_repo.mark_in_progress(case_id, "cascade")
+
+    try:
+        kpi_list = await asyncio.to_thread(load_kpi_snapshot, snapshot_time)
+        window = await asyncio.to_thread(load_kpi_window, snapshot_time, 2)
+        window_times = sorted(window)
+        prev_kpi = window[window_times[0]] if len(window_times) >= 2 else []
+        initial_state = _initial_state(kpi_list, prev_kpi, tg_code, snapshot_time, bottleneck_prob)
+    except Exception as exc:
+        await step_repo.mark_failed(case_id, "cascade", str(exc))
+        await spring_client.notify_agent_step(case_id, "cascade", str(exc)[:200], status="FAILED")
+        logger.exception("Phase1 KPI 로딩 실패: case_id=%s", case_id)
+        return None
+
+    # ML=HIGH: cascade-only (원인분석 불필요)
+    if risk_grade != "CRITICAL":
+        try:
+            await _run_cascade_only(
+                case_id, tg_id, tg_code, bottleneck_prob, risk_grade, initial_state, step_repo, spring_client
+            )
+        except Exception as exc:
+            await step_repo.mark_failed(case_id, "cascade", str(exc))
+            await spring_client.notify_agent_step(case_id, "cascade", str(exc)[:200], status="FAILED")
+            logger.exception("cascade-only 실패: case_id=%s", case_id)
+        return None
+
+    # ML=CRITICAL: cascade 직접 실행 후 CRITICAL 여부 판단
+    try:
+        cascade_output = await asyncio.to_thread(analyze_cascade, initial_state)
+    except Exception as exc:
+        await step_repo.mark_failed(case_id, "cascade", str(exc))
+        await spring_client.notify_agent_step(case_id, "cascade", str(exc)[:200], status="FAILED")
+        logger.exception("cascade 분석 실패: case_id=%s", case_id)
+        return None
+
+    # cascade 노드 출력과 initial_state를 합친 전체 state
+    cascade_state = {**initial_state, **(cascade_output if isinstance(cascade_output, dict) else {})}
+    alerts = cascade_state.get("alerts", [])
+
+    active_model = await MlModelRepository(pool).find_active()
+    model_version_id: UUID | None = UUID(str(active_model["model_version_id"])) if active_model else None
+    summary = _extract_summary("cascade", cascade_state)
+
+    is_critical = bool(alerts) and any(a.severity.value.upper() == "CRITICAL" for a in alerts)
+
+    if not is_critical:
+        # cascade 강등: CRITICAL ML이지만 composite_score 미달
+        await _complete_step(case_id, "cascade", summary, step_repo, spring_client, model_version_id)
+        for step in ("cause", "solution", "compare", "hitl", "report"):
+            await step_repo.mark_done(case_id, step, "cascade 강등(composite 점수 미달, 원인분석 생략)")
+        await _request_snapshot(case_id, tg_id, tg_code, bottleneck_prob, risk_grade, cascade_state, spring_client)
+        await spring_client.notify_agent_step(case_id, "cascade_close", "cascade 강등(composite 점수 미달)")
+        return None
+
+    # CRITICAL 확정: cascade 완료 후 원인분석 대기 상태로 전환
+    await _complete_step(case_id, "cascade", summary, step_repo, spring_client, model_version_id)
+    await _request_snapshot(case_id, tg_id, tg_code, bottleneck_prob, risk_grade, cascade_state, spring_client)
+    await step_repo.mark_in_progress(case_id, "cause")
+    asyncio.create_task(spring_client.notify_agent_step(
+        case_id, "cause", "G* 분석 후 원인분석 진행 예정", status="IN_PROGRESS"
+    ))
+    return cascade_state
+
+
+async def run_pipeline(
+    case_id: UUID,
+    tg_id: UUID,
+    tg_code: str,
+    bottleneck_prob: float,
+    risk_grade: str,
+    cascade_state: dict,
+    pool: asyncpg.Pool,
 ) -> None:
+    """Phase 2: g_star → cause → hitl (cascade는 Phase 1에서 완료됨)."""
     settings = get_settings()
     step_repo = AgentStepRepository(pool)
     cause_repo = CauseAnalysisRepository(pool)
     plan_repo = ActionPlanRepository(pool)
     spring_client = get_spring_client(settings)
-    current_step = "cascade"
-
-    await step_repo.init_steps(case_id)
-    await step_repo.mark_in_progress(case_id, current_step)
+    current_step = "cause"
 
     active_model = await MlModelRepository(pool).find_active()
     model_version_id: UUID | None = (
         UUID(str(active_model["model_version_id"])) if active_model else None
     )
 
+    pipeline = build_pipeline(
+        run_sim=True,
+        stop_at_hitl=True,
+        run_detection=False,
+        run_cascade=False,
+    )
+    final_state = dict(cascade_state)
+
     try:
-        kpi_list = await asyncio.to_thread(
-            load_kpi_snapshot,
-            snapshot_time,
-        )
-        window = await asyncio.to_thread(
-            load_kpi_window,
-            snapshot_time,
-            2,
-        )
-        window_times = sorted(window)
-        prev_kpi = window[window_times[0]] if len(window_times) >= 2 else []
-        initial_state = _initial_state(
-            kpi_list,
-            prev_kpi,
-            tg_code,
-            snapshot_time,
-            bottleneck_prob,
-        )
-
-        # 비-CRITICAL(HIGH): 확산영향(cascade)까지만 돌려 위험 점수만 산정·저장하고,
-        # 무거운 원인분석 이후는 건너뛴다. 맵에는 점수가 뜨고, 알림은 CRITICAL만(백엔드에서 게이트).
-        if risk_grade != "CRITICAL":
-            await _run_cascade_only(
-                case_id, tg_id, tg_code, bottleneck_prob, risk_grade,
-                initial_state, step_repo, spring_client,
-            )
-            return
-
-        pipeline = build_pipeline(
-            run_sim=True,
-            stop_at_hitl=True,
-            run_detection=False,
-        )
-        final_state = dict(initial_state)
-
-        async for event in pipeline.astream(initial_state):
+        async for event in pipeline.astream(cascade_state):
             for node_name, output in event.items():
                 if isinstance(output, dict):
                     final_state.update(output)
@@ -137,6 +203,9 @@ async def run_pipeline(
                     plan_repo,
                     spring_client,
                     tg_code,
+                    tg_id,
+                    bottleneck_prob,
+                    risk_grade,
                     model_version_id,
                 )
 
@@ -182,6 +251,7 @@ async def run_post_hitl(
     await step_repo.mark_in_progress(case_id, "report")
     try:
         pending = await asyncio.to_thread(_load_pending_state, case_id)
+        decided_by_name = await _fetch_user_name(pool, decided_by)
         selected_plan = None
         if not is_rejected:
             selected_plan = await ActionPlanRepository(pool).find_by_id(case_id, selected_plan_id)
@@ -194,10 +264,12 @@ async def run_post_hitl(
             decided_at,
             comment,
             decision=decision,
+            decided_by_name=decided_by_name,
         )
         tg_code = str((pending.get("compare_formatted") or [{}])[0].get("toolgroup", ""))
         state["historical_context"] = await _fetch_historical_context(pool, tg_code)
-        result = await asyncio.to_thread(build_report_pipeline().invoke, state)
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(_hitl_report_executor, build_report_pipeline().invoke, state)
         report_results = result.get("report_results", [])
         tg_code = str((pending.get("compare_formatted") or [{}])[0].get("toolgroup", ""))
         for report_result in report_results:
@@ -226,6 +298,9 @@ async def _handle_pipeline_event(
     plan_repo: ActionPlanRepository,
     spring_client: SpringClient,
     tg_code: str,
+    tg_id: UUID,
+    input_bottleneck_prob: float,
+    input_risk_grade: str,
     model_version_id: UUID | None = None,
 ) -> str:
     if node_name == "detect":
@@ -233,11 +308,33 @@ async def _handle_pipeline_event(
     if node_name == "cascade":
         summary = _extract_summary("cascade", state)
         await _complete_step(case_id, "cascade", summary, step_repo, spring_client, model_version_id)
-        if not state.get("alerts"):
+        alerts = state.get("alerts", [])
+        if not alerts:
             for step in ("cause", "solution", "compare", "hitl", "report"):
                 await step_repo.mark_done(case_id, step, "병목 없음")
+            await spring_client.notify_agent_step(case_id, "report", "병목 없음(cascade 미확인)")
             return "cascade"
+        if not any(a.severity.value.upper() == "CRITICAL" for a in alerts):
+            for step in ("cause", "solution", "compare", "hitl", "report"):
+                await step_repo.mark_done(case_id, step, "cascade 강등(composite 점수 미달, 원인분석 생략)")
+            # cascade 직후 즉시 스냅샷 전송 — 파이프라인 이후 실패 시에도 composite_score 보존
+            await _request_snapshot(
+                case_id, tg_id, tg_code, input_bottleneck_prob, input_risk_grade, state, spring_client
+            )
+            await spring_client.notify_agent_step(case_id, "cascade_close", "cascade 강등(composite 점수 미달)")
+            return "cascade"
+        # CRITICAL 확정: cascade 직후 즉시 스냅샷 전송 + 원인분석 중 상태 알림
+        # 알림 카드 최초 표시 시점에 "원인 분석 중"이 같이 표시되어야 함
+        await _request_snapshot(
+            case_id, tg_id, tg_code, input_bottleneck_prob, input_risk_grade, state, spring_client
+        )
         await step_repo.mark_in_progress(case_id, "cause")
+        asyncio.create_task(spring_client.notify_agent_step(
+            case_id, "cause", "G* 분석 후 원인분석 진행 예정", status="IN_PROGRESS"
+        ))
+        # cause가 IN_PROGRESS이므로 다음 실패는 cause로 보고 (g_star는 STEP_NAME_MAP에 없음).
+        return "cause"
+    if node_name == "emit1":
         return "cause"
     if node_name == "cause":
         reports = state.get("cause_reports", [])
@@ -294,9 +391,26 @@ async def _handle_pipeline_event(
         await step_repo.mark_in_progress(case_id, "hitl")
         return "hitl"
     if node_name == "compare_hitl":
-        summary = "관리자 승인 대기"
-        await _complete_step(case_id, "hitl", summary, step_repo, spring_client)
+        if not state.get("compare_formatted"):
+            # verification 없어서 compare_formatted 비어있음 → hitl_pending 파일 미생성 상태
+            # HITL 스킵하고 바로 RESOLVED 처리 (승인 대기 상태로 방치하면 FileNotFoundError)
+            await step_repo.mark_done(case_id, "hitl", "compare 데이터 없음(스킵)")
+            await step_repo.mark_done(case_id, "report", "compare 데이터 없음(스킵)")
+            await spring_client.notify_agent_step(case_id, "report", "compare 데이터 없음")
+            return "hitl"
+        # HITL_WAITING은 IN_PROGRESS 유지 (mark_done 안 함 — 관리자 승인 후 run_post_hitl에서 처리).
+        # 백엔드에만 DONE 알림 → AWAITING_HITL 상태 전환 + HITL_PENDING 알림 트리거.
+        await spring_client.notify_agent_step(case_id, "hitl", "관리자 승인 대기")
         return "hitl"
+    if node_name == "emit2":
+        # current_step은 mark_failed로 들어가므로 STEP_NAME_MAP 유효 스텝이어야 한다.
+        # emit2 시점의 IN_PROGRESS 스텝은 solution(cause 핸들러에서 마킹됨).
+        return "solution"
+    if node_name == "g_star":
+        # g_star 동안 IN_PROGRESS 스텝은 cause(Phase1에서 마킹됨).
+        return "cause"
+    if node_name == "compare_rag":
+        return "compare"
     return "compare" if node_name == "verify" else "cascade"
 
 
@@ -390,7 +504,8 @@ def _extract_summary(node_name: str, state: dict) -> str | None:
         formatted = state.get("compare_formatted", [])
         if not formatted:
             return None
-        return str(formatted[0].get("recommendation", {}).get("reason") or "")[:500]
+        rec = (formatted[0].get("result_v2") or {}).get("recommendation") or {}
+        return str(rec.get("reason") or rec.get("primary_reason") or "")[:500]
     return None
 
 
@@ -410,13 +525,15 @@ async def _run_cascade_only(
     target = next((a for a in cascade_state.get("alerts", []) if a.toolgroup == tg_code), None)
     composite = target.composite_score if target else None
     impact = target.impact if target else None
+    # 맵에 composite score 기반 등급 표시. cascade에서 alert 없으면 ML 등급 fallback.
+    composite_grade = target.severity.value.upper() if target else risk_grade
     snapshot_time = _snapshot_time_from_state(cascade_state) or _snapshot_time_from_state(initial_state)
     try:
         await spring_client.request_snapshot(
             case_id,
             tg_id,
             bottleneck_prob,
-            risk_grade,
+            composite_grade,
             _detected_at_from_snapshot_time(snapshot_time),
             simulation_tick=_simulation_tick(snapshot_time),
             composite_score=composite,
@@ -427,9 +544,11 @@ async def _run_cascade_only(
         )
     except Exception as exc:
         logger.error("cascade-only 스냅샷 요청 실패: case_id=%s error=%s", case_id, exc)
-    for step in ("cascade", "cause", "solution", "compare", "hitl", "report"):
-        await step_repo.mark_done(case_id, step, "위험 점수만 산정(비-CRITICAL, 원인분석 생략)")
+    await step_repo.mark_done(case_id, "cascade", "위험 점수 산정 완료(cascade-only)")
+    for step in ("cause", "solution", "compare", "hitl", "report"):
+        await step_repo.mark_done(case_id, step, "cascade 강등(composite 점수 미달, 원인분석 생략)")
     await spring_client.notify_agent_step(case_id, "cascade", "위험 점수 산정 완료")
+    await spring_client.notify_agent_step(case_id, "cascade_close", "cascade 강등(composite 점수 미달)")
 
 
 async def _request_snapshot(
@@ -447,8 +566,6 @@ async def _request_snapshot(
     risk_grade = target.severity.value.upper() if target else input_risk_grade
     composite_score = target.composite_score if target else None
     impact = target.impact if target else None
-    if risk_grade not in {"HIGH", "CRITICAL"}:
-        return
     snapshot_time = _snapshot_time_from_state(state)
     try:
         await spring_client.request_snapshot(
@@ -466,6 +583,9 @@ async def _request_snapshot(
         )
     except Exception as exc:
         logger.error("Snapshot 요청 실패: case_id=%s error=%s", case_id, exc)
+    if risk_grade not in {"HIGH", "CRITICAL"}:
+        # cascade_close가 이미 NOT_ACTIONABLE 처리 — 추가 notify 불필요
+        return
 
 
 def _snapshot_time_from_state(state: dict) -> float | None:
@@ -531,6 +651,7 @@ def _reconstruct_report_state(
     decided_at: datetime,
     comment: str | None,
     decision: str = "APPROVED",
+    decided_by_name: str | None = None,
 ) -> dict:
     is_rejected = decision == "REJECTED"
     selected_label = (
@@ -540,7 +661,7 @@ def _reconstruct_report_state(
     )
     approval_info = {
         "status": "반려" if is_rejected else "승인",
-        "approved_by": str(decided_by),
+        "approved_by": decided_by_name or str(decided_by),
         "approved_role": "ROLE_ADMIN",
         "approved_at": decided_at.isoformat(),
         "comment": comment or ("반려" if is_rejected else "승인"),
@@ -601,6 +722,16 @@ def _reconstruct_report_state(
     }
 
 
+async def _fetch_user_name(pool: asyncpg.Pool, user_id: UUID) -> str | None:
+    try:
+        row = await pool.fetchrow(
+            "SELECT user_name FROM tm_app_user WHERE user_id = $1", user_id
+        )
+        return row["user_name"] if row else None
+    except Exception:
+        return None
+
+
 async def _fetch_historical_context(pool: asyncpg.Pool, tg_code: str) -> dict | None:
     """report_agent Level 3: DB에서 반복 이력·과거 조치 효과를 조회한다.
     실패 시 None 반환 — 보고서 생성은 historical 없이 계속 진행된다."""
@@ -629,18 +760,31 @@ async def _index_report_to_qdrant(
     pool: asyncpg.Pool, case_id: UUID, tg_code: str, report_result: dict
 ) -> None:
     try:
-        from app.services.qdrant_service import QdrantService
+        from app.services.qdrant_case_service import QdrantCaseService
 
         report_text = ResponseReportRepository._rendered_markdown(report_result)
+        if not report_text.strip():
+            logger.warning("Qdrant 인덱싱 스킵: 보고서 본문 없음 case_id=%s", case_id)
+            return
         meta = report_result.get("meta") or {}
         summary = str(meta.get("summary") or report_text[:500])
-        qdrant = QdrantService(get_settings())
-        qdrant_doc_id = await qdrant.index_report(
+
+        qdrant = QdrantCaseService()
+        # index_case는 동기 + 예외 자체 처리(성공 시 point_id, 실패 시 None) → 스레드에서 실행.
+        qdrant_doc_id = await asyncio.to_thread(
+            qdrant.index_case,
             case_id=str(case_id),
             tg_code=tg_code,
-            summary=summary,
-            report_text=report_text,
+            area_name=str(meta.get("area_name") or ""),
+            detected_at=str(meta.get("detected_at") or ""),
+            risk_grade=str(meta.get("severity") or ""),
+            cause_summary=summary,
+            report_title=str(meta.get("process_name") or tg_code),
+            narrative=report_text,
         )
+        if not qdrant_doc_id:
+            logger.warning("Qdrant 인덱싱 실패(업서트 미완료): case_id=%s", case_id)
+            return
         await ResponseReportRepository(pool).mark_qdrant_indexed(case_id, qdrant_doc_id)
         logger.info("Qdrant 인덱싱 완료: case_id=%s doc_id=%s", case_id, qdrant_doc_id)
     except Exception:

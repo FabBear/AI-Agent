@@ -16,6 +16,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -26,9 +28,38 @@ from sqlalchemy import text
 from agents.logger import get_logger
 from agents.sim_runner.db_connector import get_session
 
-_PARALLEL_WORKERS = int(os.environ.get("SIM_PARALLEL_WORKERS", min(8, os.cpu_count() or 4)))
-
 _log = get_logger(__name__)
+
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.environ.get(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
+    try:
+        return max(minimum, float(os.environ.get(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+_PARALLEL_WORKERS = _env_int("SIM_PARALLEL_WORKERS", min(8, os.cpu_count() or 4))
+# 전역 동시 sim 상한. 기본값은 git 기준 worker 수처럼 케이스 1개 × 8 sim에 맞춘다.
+# 여러 케이스가 겹치더라도 이 상한 때문에 Postgres/CPU 부하가 8개를 넘지 않는다.
+_MAX_CONCURRENT_SIMS = _env_int("VERIFY_MAX_CONCURRENT_SIMS", 8)
+_sim_global_semaphore = threading.BoundedSemaphore(_MAX_CONCURRENT_SIMS)
+_SIM_MAX_RETRIES = _env_int("VERIFY_SIM_MAX_RETRIES", 2, minimum=0)
+_SIM_RETRY_BACKOFF_SEC = _env_float("VERIFY_SIM_RETRY_BACKOFF_SEC", 3.0)
+_RETRYABLE_SIM_ERRORS = (
+    "OperationalError",
+    "server closed the connection unexpectedly",
+    "could not connect to server",
+    "connection refused",
+    "terminating connection",
+    "connection reset",
+)
 
 # ── lot 레벨 액션 상수 ─────────────────────────────────────────────────────────
 # 임시값 — 시뮬레이션 검증 후 보정 필요
@@ -53,6 +84,25 @@ _RUNNER = _SIM_ROOT / "run_sim_forward_once.py"
 _VERIFY_OUT = _SIM_ROOT / "sim_verify_out"
 
 HORIZON_MIN = 120.0
+
+
+def _is_retryable_sim_error(stderr: str) -> bool:
+    lowered = stderr.lower()
+    return any(token.lower() in lowered for token in _RETRYABLE_SIM_ERRORS)
+
+
+def _prefer_ipv4_localhost(url: str) -> str:
+    return url.replace("@localhost:", "@127.0.0.1:")
+
+
+def _sim_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("PGCONNECT_TIMEOUT", "10")
+    if env.get("VERIFY_SIM_FORCE_IPV4_LOCALHOST", "1").lower() not in ("0", "false", "no"):
+        for key in ("DATABASE_URL", "SIM_DATABASE_URL", "BACKEND_DATABASE_URL"):
+            if env.get(key):
+                env[key] = _prefer_ipv4_localhost(env[key])
+    return env
 
 
 # ── manifest 경로 (T0 기반 동적) ──────────────────────────────────────────────
@@ -82,6 +132,18 @@ def find_baseline_scenario(t0: float) -> str | None:
     except Exception as e:
         _log.warning(f"[Exec] runs_manifest.csv 읽기 실패: {e}")
         return None
+
+
+def manifest_all_failed(t0: float) -> bool:
+    """runs_manifest.csv가 존재하지만 ok 행이 0개인지 확인 (Step2 전부 실패 감지용)."""
+    mf = _manifest_file(t0)
+    if not mf.is_file():
+        return False
+    try:
+        df = pd.read_csv(mf)
+        return not df.empty and df["status"].eq("ok").sum() == 0
+    except Exception:
+        return False
 
 
 def _read_manifest_runs(t0: float) -> list[dict]:
@@ -527,31 +589,56 @@ def run_whatif_paired(
             "baseline_csv_dir": baseline_csv_dir,
         })
 
+    if not ready_runs:
+        raise RuntimeError(f"[Exec] {label}: DB 셋업이 완료된 paired 런이 없습니다.")
+
     # ── 2단계: 시뮬레이션 병렬 실행 ─────────────────────────────────────────
     def _run_one(r: dict) -> dict | None:
-        result = subprocess.run(
-            [
-                str(_VENV_PYTHON), str(_RUNNER),
-                "--scenario-id", r["whatif_id"],
-                "--csv-dir", str(r["whatif_csv_dir"]),
-                "--seed", str(r["seed"]),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=str(_SIM_ROOT),
-        )
-        if result.returncode != 0:
+        env = _sim_subprocess_env()
+        cmd = [
+            str(_VENV_PYTHON), str(_RUNNER),
+            "--scenario-id", r["whatif_id"],
+            "--csv-dir", str(r["whatif_csv_dir"]),
+            "--seed", str(r["seed"]),
+        ]
+        for attempt in range(_SIM_MAX_RETRIES + 1):
+            # 전역 동시 실행 제한 — 플랜 그룹이 여럿 겹쳐도 한 번에 _MAX_CONCURRENT_SIMS개만 Postgres에 부하.
+            with _sim_global_semaphore:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=int(os.environ.get("VERIFY_SIM_TIMEOUT_SEC", "600")),
+                    cwd=str(_SIM_ROOT),
+                    env=env,
+                )
+            if result.returncode == 0:
+                return r
+
+            stderr_tail = result.stderr[-1500:]
+            retryable = _is_retryable_sim_error(result.stderr)
+            if retryable and attempt < _SIM_MAX_RETRIES:
+                sleep_sec = _SIM_RETRY_BACKOFF_SEC * (attempt + 1)
+                _log.warning(
+                    f"[Exec] run_{r['run_index']:02d} DB 연결성 실패, 재시도 "
+                    f"{attempt + 1}/{_SIM_MAX_RETRIES} [{r['whatif_id']}] "
+                    f"after {sleep_sec:.1f}s:\n{stderr_tail}"
+                )
+                time.sleep(sleep_sec)
+                continue
+
             _log.error(
                 f"[Exec] run_{r['run_index']:02d} 시뮬 실패 [{r['whatif_id']}]:\n"
-                f"{result.stderr[-500:]}"
+                f"{stderr_tail}"
             )
             return None
-        return r
 
     pairs: list[dict] = []
     workers = min(_PARALLEL_WORKERS, len(ready_runs))
-    _log.info(f"[Exec] {group_id} — {len(ready_runs)}개 병렬 실행 (workers={workers})")
+    _log.info(
+        f"[Exec] {group_id} — {len(ready_runs)}개 실행 "
+        f"(workers={workers}, retries={_SIM_MAX_RETRIES})"
+    )
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(_run_one, r): r for r in ready_runs}
