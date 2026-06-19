@@ -1,0 +1,70 @@
+name: Build & Push to Harbor
+
+# Harbor 레지스트리에 ai-agent(FastAPI) 이미지를 빌드·푸시한다.
+#
+# 주의: AI-Agent/Dockerfile.fastapi 는 빌드 컨텍스트 안에서
+#   COPY AI-Agent/ .            (이 repo)
+#   COPY Simulation/simulation/ ./simulation/   (별도 repo: FabBear/Simulation)
+# 두 경로를 모두 참조한다. 따라서 두 repo를 함께 체크아웃한 뒤 컨텍스트를 '.'로 빌드한다.
+#
+# 필요한 설정(Settings → Secrets and variables → Actions):
+#   Variables: HARBOR_REGISTRY (예: harbor.example.com), HARBOR_PROJECT (예: fabbear)
+#   Secrets:   HARBOR_USERNAME, HARBOR_PASSWORD (Harbor 로봇 계정 권장)
+#   Secrets:   SIMULATION_REPO_TOKEN — FabBear/Simulation 이 private이면 read 권한 PAT 필요.
+#              public이면 설정 안 해도 됨(github.token 으로 폴백).
+on:
+  push:
+    branches: [main, dev]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ${{ vars.HARBOR_REGISTRY }}/${{ vars.HARBOR_PROJECT }}/ai-agent
+    steps:
+      - name: Checkout AI-Agent
+        uses: actions/checkout@v4
+        with:
+          path: AI-Agent
+
+      - name: Checkout Simulation (Dockerfile 의존)
+        uses: actions/checkout@v4
+        with:
+          repository: FabBear/Simulation
+          ref: main
+          token: ${{ secrets.SIMULATION_REPO_TOKEN || github.token }}
+          path: Simulation
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.HARBOR_REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Docker metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,format=short
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./AI-Agent/Dockerfile.fastapi
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
