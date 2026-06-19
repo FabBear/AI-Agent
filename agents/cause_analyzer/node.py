@@ -141,9 +141,15 @@ def analyze_cause(
                 shap_top, trend_top, upstream_suspects, tg_g_star_evidence, sim_forecast
             )
             judgment = judge(
-                tg, evidence_bundle, categories, upstream_suspects,
-                g_star=g_star,
+                toolgroup=tg,
+                shap_top=shap_top,
+                trend_top=trend_top,
+                g_star_evidence=tg_g_star_evidence,
+                sim_forecast=sim_forecast,
+                upstream_suspects=upstream_suspects,
                 retry_n=retry_n,
+                evidence_bundle=evidence_bundle,
+                categories=categories,
             )
 
             if not judgment.needs_more_data or retry_n >= _MAX_RETRIES:
