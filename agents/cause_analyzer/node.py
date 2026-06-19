@@ -148,7 +148,6 @@ def analyze_cause(
                 sim_forecast=sim_forecast,
                 upstream_suspects=upstream_suspects,
                 retry_n=retry_n,
-                evidence_bundle=evidence_bundle,
                 categories=categories,
             )
 

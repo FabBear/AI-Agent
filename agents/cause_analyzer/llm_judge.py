@@ -21,7 +21,6 @@ from agents.logger import get_logger
 from agents.schemas.cause import (
     CauseCategory,
     CauseJudgment,
-    FeatureEvidence,
     SHAPFeature,
     SimForecast,
     TrendInsight,
@@ -159,8 +158,6 @@ def judge(
     sim_forecast: SimForecast | None,
     upstream_suspects: list[str],
     retry_n: int = 0,
-    # 룰 기반 fallback용 (evidence_aggregator 결과)
-    evidence_bundle: list[FeatureEvidence] | None = None,
     categories: list[CauseCategory] | None = None,
 ) -> CauseJudgment:
     api_key = os.getenv("OPENAI_API_KEY", "")
@@ -171,7 +168,7 @@ def judge(
         )
         if result:
             return result
-    return _rule_based_judgment(toolgroup, shap_top, evidence_bundle or [], categories or [])
+    return _rule_based_judgment(toolgroup, shap_top, categories or [])
 
 
 def _call_openai(
@@ -265,7 +262,6 @@ def _call_openai(
 def _rule_based_judgment(
     toolgroup: str,
     shap_top: list[SHAPFeature],
-    evidence_bundle: list[FeatureEvidence],
     categories: list[CauseCategory],
 ) -> CauseJudgment:
     """LLM 호출 실패 시 SHAP 기반 룰 판정."""
@@ -327,8 +323,8 @@ def _rule_based_judgment(
             f"(LLM 호출 실패로 대체)"
         ),
         secondary_causes=[c for c, s in cat_scores.items() if c != top_cat and s > 0.1],
-        dismissed=[c for c, s in cat_scores.items() if s <= 0.05],
-        dismissed_reason="SHAP 기여율 낮음" if any(s <= 0.05 for s in cat_scores.values()) else "",
+        dismissed=(dismissed := [c for c, s in cat_scores.items() if c != top_cat and s <= 0.05]),
+        dismissed_reason="SHAP 기여율 낮음" if dismissed else "",
         needs_more_data=confidence == "LOW",
         cause_summary=f"[주요 원인] {top_cat} — {primary_feature} (SHAP {top_score*100:.1f}%)",
     )
