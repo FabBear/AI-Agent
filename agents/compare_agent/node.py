@@ -67,7 +67,12 @@ def _build_action_candidates(verified_candidates: list[dict]) -> list[dict]:
     candidates = []
     for vc in verified_candidates:
         action_rows = vc.get("action_rows", [])
-        action_kind = action_rows[0]["action_kind"] if action_rows else "UNKNOWN"
+        if action_rows:
+            action_kind = action_rows[0]["action_kind"]
+        elif vc.get("plan_meta", {}).get("release_interval_delta_pct") is not None:
+            action_kind = "LOT_RELEASE_INTERVAL"
+        else:
+            action_kind = "UNKNOWN"
         kpi_stats = vc.get("kpi_stats", {})
         p_val = vc.get("paired_t_p")
         confidence = (
@@ -97,6 +102,7 @@ def _build_bottleneck_info(toolgroup: str, alert, kpi) -> dict:
     }
     if kpi:
         info.update({
+            "area_name": getattr(kpi, "area_name", None),
             "wip_count": int(kpi.wip),
             "avg_queue_time_min": round(float(kpi.q_time_min), 2),
             "wait_ratio": round(float(kpi.wait_ratio), 4),
@@ -261,11 +267,13 @@ _BN_KPI_MAP = {
 
 
 def _build_meta(ci: dict) -> dict:
+    bottleneck_info = ci.get("bottleneck_info") or {}
     return {
         "schema_version": SCHEMA_VERSION,
         "scenario_type": ci.get("scenario_type", "global_plan"),
         "scenario_name": ci.get("scenario_name", ci.get("process_name", "")),
         "anchor_toolgroup": ci.get("anchor_toolgroup", ci.get("toolgroup", "")),
+        "area_name": ci.get("area_name") or bottleneck_info.get("area_name"),
         "target_toolgroups": list(ci.get("target_toolgroups") or [ci.get("toolgroup", "")]),
         "severity": ci.get("severity", ""),
         "snapshot_time": ci.get("snapshot_time", 0.0),
@@ -390,6 +398,7 @@ def _option_params(pm: dict) -> dict:
     for k in (
         "release_interval_minutes", "current_interval_minutes", "release_interval_delta_min",
         "release_interval_delta_pct", "lot_priority_rule", "superhotlot_enable",
+        "lot_adjustments",
     ):
         if pm.get(k) is not None:
             out[k] = pm[k]
@@ -539,7 +548,11 @@ def _build_action_option(
         "recommendation_status": rec_meta["recommendation_status"],
         "badge": rec_meta["badge"],
         "is_baseline": False,
-        "tradeoffs": c.get("tradeoffs", []),
+        "tradeoffs": [
+            f"{t['kpi']} {t['mean_delta']:+.3f} ({t['severity']})"
+            if isinstance(t, dict) else str(t)
+            for t in (c.get("tradeoffs") or [])
+        ],
         "per_tg_forecasts": per_tg_forecasts,
         "aggregation_rule": c.get("aggregation_rule") or "",
         "comparison_basis": (
@@ -605,11 +618,11 @@ def _build_data_quality(candidates: list[dict]) -> dict:
                 "code": "SIM_KPI_IDENTICAL",
                 "severity": "high",
                 "message": (
-                    f"baseline ↔ whatif 모든 KPI mean_delta=0 (paired_n={min_n}). "
-                    "시뮬 엔진이 whatif 액션을 무시하는 것으로 의심됩니다."
+                    f"baseline ↔ whatif 모든 비교 KPI mean_delta=0 (paired_n={min_n}). "
+                    "what-if 액션 미반영, 120분 horizon 내 영향 미도달, 또는 대상 TG까지 효과가 전달되지 않은 케이스인지 확인이 필요합니다."
                 ),
                 "suspect_component": (
-                    "agents/verification_agent/sim_executor.py · scripts/run_sim_forward_once.py"
+                    "agents/verification_agent/sim_executor.py · Simulation/simulation/run_sim_forward_once.py · horizon/target_tg"
                 ),
             }],
             "raw_diagnostics": {

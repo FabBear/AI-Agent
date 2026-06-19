@@ -30,7 +30,10 @@ class CauseAnalysisRepository:
         cause_type = report.judgment.primary_category if report.judgment else None
         primary_cause_feature = report.judgment.primary_cause if report.judgment else None
         cause_judgment_json = json.dumps(report.judgment.model_dump()) if report.judgment else None
-        consensus_json = json.dumps(report.consensus.model_dump()) if report.consensus else None
+        consensus_payload = report.consensus.model_dump() if report.consensus else None
+        if consensus_payload is not None and report.sim_forecast:
+            consensus_payload["sim_forecast"] = report.sim_forecast.model_dump()
+        consensus_json = json.dumps(consensus_payload) if consensus_payload else None
         trend_json = json.dumps([t.model_dump() for t in report.trend_top]) if report.trend_top else None
         await self._pool.execute(
             """

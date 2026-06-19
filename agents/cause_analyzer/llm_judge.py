@@ -18,6 +18,7 @@ from agents import config
 from agents.cause_analyzer.g_star_loader import GStarResult, KpiEvidence
 from agents.cause_analyzer.rubric import RUBRIC
 from agents.logger import get_logger
+from agents.prompt_store import get_active_prompt
 from agents.schemas.cause import (
     CauseCategory,
     CauseJudgment,
@@ -45,6 +46,15 @@ _SYSTEM = """당신은 반도체 FAB 병목 원인 판정 전문가입니다.
 - 신뢰도는 수식이 아니라 증거 수렴 정도에 대한 전문가적 판단이다.
 - 차원 간 모순이 있을 경우 어느 쪽이 더 신뢰할 만한지 이유를 설명한다.
 - 반드시 한국어로 답하고, 아래 JSON 형식만 출력한다."""
+
+
+def _build_system_prompt() -> str:
+    """DB 활성 프롬프트(CAUSE_ANALYSIS)가 있으면 코드 기본 _SYSTEM 앞에 덧붙인다."""
+    role_prompt = get_active_prompt("CAUSE_ANALYSIS", _SYSTEM)
+    if role_prompt.strip() == _SYSTEM.strip():
+        return _SYSTEM
+    return f"{role_prompt}\n\n{_SYSTEM}"
+
 
 _OUTPUT_SCHEMA = """\
 반드시 아래 JSON만 출력하세요:
@@ -214,7 +224,7 @@ def _call_openai(
             return client.chat.completions.create(
                 model=config.LLM_MODEL,
                 messages=[
-                    {"role": "system", "content": _SYSTEM},
+                    {"role": "system", "content": _build_system_prompt()},
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},

@@ -11,6 +11,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from agents import config
 from agents.logger import get_logger
+from agents.prompt_store import get_active_prompt
 from agents.schemas.alert import BottleneckAlert
 from agents.schemas.cause import CauseReport
 from agents.token_tracker import record as _record_tokens
@@ -38,6 +39,10 @@ _SYSTEM_PROMPT = """당신은 반도체 FAB 운영 전문가로, 확정된 Lot R
 - expected_effect: 파라미터 조정이 WIP / wait_ratio / Cycle Time에 미치는 기대 효과 (1~2문장)
 - rationale: 해당 파라미터 조합을 선택한 근거 (1~2문장)
 - 파라미터 수치나 종류를 변경하거나 다른 필드를 추가하지 않는다."""
+
+
+def _build_system_prompt() -> str:
+    return get_active_prompt("ACTION_PLAN_GEN", _SYSTEM_PROMPT)
 
 
 def _build_user_prompt(
@@ -130,7 +135,7 @@ def generate_texts(
             return client.chat.completions.create(
                 model=config.LLM_MODEL,
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": _build_system_prompt()},
                     {"role": "user", "content": user_prompt},
                 ],
                 response_format={"type": "json_object"},

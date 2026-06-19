@@ -6,6 +6,8 @@ GlobalSolutionPlan 또는 per-TG SolutionCandidate 각각에 대해 WHATIF 시�
 from __future__ import annotations
 
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from agents.logger import get_logger
 from agents.schemas.alert import BottleneckAlert, SeverityLevel
@@ -21,6 +23,7 @@ from agents.verification_agent.kpi_comparator import compute_paired_deltas
 from agents.verification_agent.sim_executor import (
     HORIZON_MIN,
     find_baseline_scenario,
+    manifest_all_failed,
     run_whatif_paired,
 )
 
@@ -29,92 +32,132 @@ _log = get_logger(__name__)
 _RANK_TO_LABEL = {1: "A", 2: "B", 3: "C"}
 
 
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.environ.get(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _verify_one_composite_plan(
+    cand_dict: dict,
+    anchor_alert: BottleneckAlert,
+    t0: float,
+) -> dict | None:
+    """단일 GlobalCompositeCandidate를 30회 paired 시뮬로 검증하고 결과 dict를 반환."""
+    try:
+        candidate = GlobalCompositeCandidate(**cand_dict)
+    except Exception as e:
+        _log.warning(f"[Verify] GlobalCompositeCandidate 파싱 실패: {e}")
+        return None
+
+    action_rows, release_multiplier = composite_to_action_rows(candidate, t0)
+    lot_adjustments = [adj.model_dump() if hasattr(adj, "model_dump") else adj
+                       for adj in candidate.lot_adjustments]
+
+    _log.info(
+        f"[Verify] 플랜 {candidate.plan_id} — "
+        f"{len(candidate.target_toolgroups)}개 TG, "
+        f"+{candidate.release_interval_delta_pct}%, "
+        f"lot_adjustments={len(lot_adjustments)}건 "
+        f"× 30 paired 시뮬 시작 (anchor={anchor_alert.toolgroup})"
+    )
+
+    try:
+        group_id, pairs, baseline_scenario_id = run_whatif_paired(
+            t0=t0,
+            horizon_min=HORIZON_MIN,
+            action_rows=action_rows,
+            release_interval_multiplier=release_multiplier,
+            label=f"COMPOSITE_{candidate.plan_id.upper()}",
+            lot_adjustments=lot_adjustments,
+        )
+    except Exception as e:
+        _log.error(f"[Verify] 플랜 {candidate.plan_id} 시뮬 실패: {e}")
+        return None
+
+    kpi_deltas = compute_paired_deltas(pairs, anchor_alert.toolgroup)
+    kpi_stats: dict[str, dict] = {}
+    for kpi_name, deltas in kpi_deltas.items():
+        if len(deltas) >= 2:
+            kpi_stats[kpi_name] = compute_paired_stats(deltas)
+
+    target_stats = kpi_stats.get("q_time_min", {})
+
+    plan_meta = {
+        "plan_id": candidate.plan_id,
+        "target_toolgroups": candidate.target_toolgroups,
+        "release_interval_delta_pct": candidate.release_interval_delta_pct,
+        "cause_complexity": candidate.cause_complexity,
+        "lot_adjustments_count": len(lot_adjustments),
+        "lot_adjustments": lot_adjustments,
+        "hitl_escalation_recommended": candidate.hitl_escalation_recommended,
+        "escalation_reason": candidate.escalation_reason,
+    }
+
+    return {
+        "plan_id": candidate.plan_id,
+        "target_toolgroups": candidate.target_toolgroups,
+        "snapshot_time": t0,
+        "baseline_scenario_id": baseline_scenario_id,
+        "verified_candidates": [{
+            "label": candidate.plan_id,
+            "name": {"conservative": "보수적 조정안", "standard": "표준 조정안", "aggressive": "강화 조정안"}.get(
+                candidate.plan_id, candidate.plan_id
+            ),
+            "target_kpi": "q_time_min",
+            "action_rows": action_rows,
+            "whatif_scenario_group_id": group_id,
+            "baseline_scenario_id": baseline_scenario_id,
+            "paired_n": len(pairs),
+            "kpi_stats": kpi_stats,
+            "target_kpi_stats": target_stats,
+            "verdict": target_stats.get("verdict", "unknown"),
+            "paired_t_p": target_stats.get("paired_t_p"),
+            "plan_meta": plan_meta,
+        }],
+    }
+
+
 def _verify_composite_candidates(
     solution_candidates: list[dict],
     alerts: list[BottleneckAlert],
     t0: float,
 ) -> list[dict]:
-    """GlobalCompositeCandidate 3개(보수/표준/강화) 각각을 30회 paired 시뮬로 검증."""
+    """GlobalCompositeCandidate 3개(보수/표준/강화)를 30회 paired 시뮬 검증."""
     critical_alerts = [a for a in alerts if a.severity == SeverityLevel.CRITICAL]
     anchor_alert = max(critical_alerts, key=lambda a: a.composite_score) if critical_alerts else None
     if anchor_alert is None:
         _log.warning("[Verify] CRITICAL 알림 없음 — anchor TG 없이 스킵")
         return []
 
+    n_plans = len(solution_candidates)
+    workers = min(_env_int("VERIFY_PLAN_PARALLEL_WORKERS", 1), n_plans)
+    _log.info(f"[Verify] {n_plans}개 플랜 검증 시작 (workers={workers}, anchor={anchor_alert.toolgroup})")
+
     results: list[dict] = []
+    if workers <= 1:
+        for cand_dict in solution_candidates:
+            result = _verify_one_composite_plan(cand_dict, anchor_alert, t0)
+            if result is not None:
+                results.append(result)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as plan_pool:
+            futures = {
+                plan_pool.submit(_verify_one_composite_plan, cand_dict, anchor_alert, t0): cand_dict
+                for cand_dict in solution_candidates
+            }
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                except Exception as e:
+                    _log.error(f"[Verify] 플랜 검증 예외: {e}")
+                    result = None
+                if result is not None:
+                    results.append(result)
 
-    for cand_dict in solution_candidates:
-        try:
-            candidate = GlobalCompositeCandidate(**cand_dict)
-        except Exception as e:
-            _log.warning(f"[Verify] GlobalCompositeCandidate 파싱 실패: {e}")
-            continue
-
-        action_rows, release_multiplier = composite_to_action_rows(candidate, t0)
-        lot_adjustments = [adj.model_dump() if hasattr(adj, "model_dump") else adj
-                           for adj in candidate.lot_adjustments]
-
-        _log.info(
-            f"[Verify] 플랜 {candidate.plan_id} — "
-            f"{len(candidate.target_toolgroups)}개 TG, "
-            f"+{candidate.release_interval_delta_pct}%, "
-            f"lot_adjustments={len(lot_adjustments)}건 "
-            f"× 30 paired 시뮬 시작 (anchor={anchor_alert.toolgroup})"
-        )
-
-        try:
-            group_id, pairs, baseline_scenario_id = run_whatif_paired(
-                t0=t0,
-                horizon_min=HORIZON_MIN,
-                action_rows=action_rows,
-                release_interval_multiplier=release_multiplier,
-                label=f"COMPOSITE_{candidate.plan_id.upper()}",
-                lot_adjustments=lot_adjustments,
-            )
-        except Exception as e:
-            _log.error(f"[Verify] 플랜 {candidate.plan_id} 시뮬 실패: {e}")
-            continue
-
-        kpi_deltas = compute_paired_deltas(pairs, anchor_alert.toolgroup)
-        kpi_stats: dict[str, dict] = {}
-        for kpi_name, deltas in kpi_deltas.items():
-            if len(deltas) >= 2:
-                kpi_stats[kpi_name] = compute_paired_stats(deltas)
-
-        target_stats = kpi_stats.get("q_time_min", {})
-
-        plan_meta = {
-            "plan_id": candidate.plan_id,
-            "target_toolgroups": candidate.target_toolgroups,
-            "release_interval_delta_pct": candidate.release_interval_delta_pct,
-            "cause_complexity": candidate.cause_complexity,
-            "lot_adjustments_count": len(lot_adjustments),
-            "hitl_escalation_recommended": candidate.hitl_escalation_recommended,
-            "escalation_reason": candidate.escalation_reason,
-        }
-
-        results.append({
-            "plan_id": candidate.plan_id,
-            "target_toolgroups": candidate.target_toolgroups,
-            "snapshot_time": t0,
-            "baseline_scenario_id": baseline_scenario_id,
-            "verified_candidates": [{
-                "label": candidate.plan_id,
-                "name": {"conservative": "보수적 조정안", "standard": "표준 조정안", "aggressive": "강화 조정안"}.get(
-                    candidate.plan_id, candidate.plan_id
-                ),
-                "target_kpi": "q_time_min",
-                "action_rows": action_rows,
-                "whatif_scenario_group_id": group_id,
-                "baseline_scenario_id": baseline_scenario_id,
-                "paired_n": len(pairs),
-                "kpi_stats": kpi_stats,
-                "target_kpi_stats": target_stats,
-                "verdict": target_stats.get("verdict", "unknown"),
-                "paired_t_p": target_stats.get("paired_t_p"),
-                "plan_meta": plan_meta,
-            }],
-        })
+    results.sort(key=lambda r: ("conservative", "standard", "aggressive").index(r["plan_id"])
+                 if r["plan_id"] in ("conservative", "standard", "aggressive") else 99)
 
     _log.info(f"[Verify] GlobalCompositeCandidate 검증 완료 — {len(results)}개 플랜")
     return results
@@ -311,8 +354,22 @@ def verify_solutions(state: PipelineState) -> PipelineState:
 
     baseline_id = find_baseline_scenario(t0)
     if baseline_id is None:
+        # G* Step2(Monte Carlo baseline)가 아직 진행 중일 수 있음 — 최대 8분 polling
+        _poll_interval = int(os.environ.get("VERIFY_BASELINE_POLL_SEC", "30"))
+        _poll_max = int(os.environ.get("VERIFY_BASELINE_TIMEOUT_SEC", "480"))
+        _waited = 0
+        while baseline_id is None and _waited < _poll_max:
+            if manifest_all_failed(t0):
+                _log.error("[Verify] runs_manifest.csv 전체 실패 — 즉시 종료")
+                break
+            _log.info(f"[Verify] runs_manifest.csv 대기 중 ({_waited}/{_poll_max}s)...")
+            time.sleep(_poll_interval)
+            _waited += _poll_interval
+            baseline_id = find_baseline_scenario(t0)
+    if baseline_id is None:
         _log.error("[Verify] baseline 시나리오 없음 — 전체 스킵")
         return {**state, "verification_results": []}
+    _log.info(f"[Verify] baseline 확인 완료: {baseline_id}")
 
     first = solution_candidates[0]
     if first.get("plan_id") in ("conservative", "standard", "aggressive"):

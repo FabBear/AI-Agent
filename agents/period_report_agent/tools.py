@@ -40,6 +40,17 @@ def _delta(value, suffix: str = "") -> str:
         return "확인필요"
 
 
+def _row_value(row, *keys: str):
+    for key in keys:
+        try:
+            value = row[key]
+        except (KeyError, TypeError):
+            continue
+        if value is not None:
+            return value
+    return None
+
+
 def _dt(value) -> str:
     if value is None:
         return "-"
@@ -154,10 +165,27 @@ async def get_case_effectiveness(ctx: TaskContext, case_ref: str = "") -> str:
     selected = next((p for p in plans if p["selected"]), None)
     if selected is None:
         return f"{label} 케이스: 승인(선택)된 대응안이 없어 효과 검증 불가."
-    est = f"대기 {_delta(selected['est_avg_wait_delta'])}일/처리량 {_delta(selected['est_throughput_delta'])}"
-    if selected["validated_at"] is None and selected["actual_avg_wait_delta"] is None and selected["actual_throughput_delta"] is None:
+    est_parts = [
+        f"Q-time {_delta(_row_value(selected, 'est_q_time_delta', 'est_avg_wait_delta'), '분')}",
+        f"가동률 {_delta(_row_value(selected, 'est_util_delta', 'est_throughput_delta'))}",
+    ]
+    wip_delta = _row_value(selected, "est_wip_delta")
+    wait_ratio_delta = _row_value(selected, "est_wait_ratio_delta")
+    if wip_delta is not None:
+        est_parts.append(f"WIP {_delta(wip_delta, ' Lot')}")
+    if wait_ratio_delta is not None:
+        est_parts.append(f"대기율 {_delta(wait_ratio_delta)}")
+    est = "/".join(est_parts)
+    if (
+        selected["validated_at"] is None
+        and selected["actual_avg_wait_delta"] is None
+        and selected["actual_throughput_delta"] is None
+    ):
         return f"{label} '{selected['plan_title']}' 승인 — 예상 {est}, 실측은 아직 미검증."
-    act = f"대기 {_delta(selected['actual_avg_wait_delta'])}일/처리량 {_delta(selected['actual_throughput_delta'])}"
+    act = (
+        f"대기 {_delta(selected['actual_avg_wait_delta'])}/"
+        f"처리량 {_delta(selected['actual_throughput_delta'])}"
+    )
     return f"{label} '{selected['plan_title']}' — 예상({est}) vs 실측({act}), 검증 {_dt(selected['validated_at'])}."
 
 

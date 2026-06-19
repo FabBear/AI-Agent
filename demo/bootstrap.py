@@ -69,6 +69,7 @@ def _index_demo_case(path: Path, service: QdrantCaseService) -> None:
     service.index_case(
         case_id=path.stem,
         tg_code=frontmatter.get("toolgroup", ""),
+        area_name=frontmatter.get("area_name", frontmatter.get("area", "")),
         bottleneck_cause_type=frontmatter.get("cause_category", ""),
         risk_grade=frontmatter.get("risk_grade", ""),
         cause_summary=_extract_summary(markdown),

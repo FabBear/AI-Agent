@@ -39,6 +39,7 @@ TOOL_USE_PROMPT = """
 [도구 사용]
 - 개념·정의·원리·SOP·용어 질문은 반드시 search_knowledge를 먼저 호출해 사내 지식베이스 내용을 근거로 답하라. 검색 결과가 없을 때만 일반 지식으로 보완하되 그 사실을 밝힌다.
 - 현재 상태 질문(현황·WIP·가동률·구역/설비 상태 등)은 get_fab_status를 호출해 실시간 현황을 받아 답하라. 단, WIP 순위·대기·적체·계층 질문은 get_lot_status/get_top_toolgroups/get_tool_status를 우선 사용한다.
+- Lot 투입계획·투입 스케줄·release plan·이번 7일/이번 주 Lot 투입 질문은 get_lot_release_plan을 호출한다. 이것은 현재 WIP 현황(get_lot_status)이 아니라 향후 투입 예정 조회다.
 - 추세/변화/지난 N시간 질문은 get_kpi_trend를 호출한다.
 - 대상 탐색과 추세가 결합된 질문은 get_top_toolgroups로 대상을 먼저 찾고, 반환된 TG 코드로 get_kpi_trend(group_by='tg')를 호출한다.
 - 병목 케이스 목록·이력은 search_bottleneck_cases, 케이스 원인·대응안·승인·리포트 요약은 get_case_detail을 사용한다.
@@ -99,6 +100,19 @@ def _routing_hint(message: str) -> str | None:
             "forecast 모델이 없다. 숫자를 예측하거나 합산해 만들지 마라. 대신 get_kpi_trend를 호출해 최근 WIP "
             "추세를 근거로 '내일 WIP 수치 예측은 지원하지 않고, 최근 추세 기준으로 볼 위험 신호는...' 형식으로 답하라. "
             "본문에 TG별 수치 목록이나 계산식을 나열하지 마라."
+        )
+    release_plan_terms = ("투입계획", "투입예정", "투입스케줄", "lotschedule", "lot스케줄", "릴리즈계획", "releaseplan", "release")
+    if any(term in compact for term in release_plan_terms):
+        range_hint = "7d" if any(term in compact for term in ("7일", "일주일", "이번주", "week")) else "24h"
+        if any(term in compact for term in ("30일", "한달", "이번달", "month")):
+            range_hint = "30d"
+        elif any(term in compact for term in ("48시간", "이틀", "2일")):
+            range_hint = "48h"
+        return (
+            "[라우팅 힌트] 사용자가 Lot 투입계획/투입 스케줄을 묻고 있다. "
+            f"get_lot_release_plan(range='{range_hint}')를 반드시 호출해 향후 투입 예정, Priority/SuperHot, 일별 버킷을 근거로 답하라. "
+            "get_lot_status는 현재 WIP/대기 현황용이므로 이 질문에는 대신 쓰지 마라. "
+            "투입 순서 변경이나 확정 스케줄 재배열은 수행하지 말고 조회 결과만 설명하라."
         )
     if (
         any(term in compact for term in ("봐야할", "볼만한", "주의할", "확인할", "우선볼", "먼저볼"))

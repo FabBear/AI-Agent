@@ -9,6 +9,7 @@ STEP_NAME_MAP = {
     "compare": "ACTION_PLAN_COMPARE",
     "hitl": "HITL_WAITING",
     "report": "REPORT_GEN",
+    "cascade_close": "CASCADE_CLOSED",
 }
 
 STEP_ORDER_MAP = {

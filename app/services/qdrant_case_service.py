@@ -108,8 +108,8 @@ class QdrantCaseService:
         source_path: str = "",
         report_url: str = "",
         narrative: str = "",
-    ) -> None:
-        """케이스를 임베딩하여 Qdrant에 upsert.
+    ) -> str | None:
+        """케이스를 임베딩하여 Qdrant에 upsert. 성공 시 point_id, 실패/스킵 시 None 반환.
 
         Args:
             case_id: 결정론적 ID (파일명 stem 등). 동일 ID 재실행 시 덮어씀.
@@ -120,7 +120,7 @@ class QdrantCaseService:
         """
         if not narrative.strip():
             logger.warning("index_case: narrative 없음, 건너뜀 (case_id=%s)", case_id)
-            return
+            return None
         try:
             embedding = self._embed(narrative[:8000])
             point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, case_id))
@@ -153,8 +153,10 @@ class QdrantCaseService:
             )
             resp.raise_for_status()
             logger.debug("index_case 완료: %s → point_id %s", case_id, point_id)
+            return point_id
         except Exception:
             logger.exception("QdrantCaseService.index_case 실패 (case_id=%s)", case_id)
+            return None
 
     def count_cases(self) -> int | None:
         """Return indexed case count, or None when Qdrant is unavailable."""

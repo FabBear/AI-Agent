@@ -19,6 +19,7 @@ def _build_bottleneck_info(
     }
     if kpi:
         info.update({
+            "area_name": getattr(kpi, "area_name", None),
             "wip_count": int(getattr(kpi, "wip", 0) or 0),
             "avg_queue_time_min": round(float(getattr(kpi, "q_time_min", 0.0) or 0.0), 2),
             "wait_ratio": round(float(getattr(kpi, "wait_ratio", 0.0) or 0.0), 4),

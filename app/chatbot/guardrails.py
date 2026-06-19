@@ -18,6 +18,13 @@ _EXEC_PATTERNS: tuple[tuple[str, str], ...] = (
     ("admin_change", r"(threshold|임계값|쓰레숄드)\s*\S{0,6}?(바꿔|변경해|조정해|적용해|반영해|올려|내려)"),
     ("agent_run", r"(진단|분석|파이프라인|시뮬|시뮬레이션|보고서|리포트|에이전트)\s*\S{0,4}?(돌려|실행해|시작해|가동해|구동해)"),
     ("agent_run", r"(실행|구동|가동)\s*시작해"),
+    # 시스템 정보 노출 차단: 메뉴 구성, 권한 구조, 사용 가능 기능 등은 외부 유출 금지
+    ("system_info", r"(관리자|admin)\s*(메뉴|기능|화면|페이지|탭|권한)"),
+    ("system_info", r"메뉴\s*(에|에서|가|는|이)?\s*(뭐|무엇|어떤)"),
+    ("system_info", r"(내|제|나의?)\s*(권한|접근\s*권한)\s*(이|가|을|는|설정|변경|확인|볼\s*수|어떻게|있어)"),
+    ("system_info", r"권한\s*(설정|변경|편집|수정|확인)\s*(할\s*수|가능|어디|어떻게)"),
+    ("system_info", r"(어떤|무슨|뭐)\s*(메뉴|화면|탭|기능)\s*(을|이|가)?\s*(쓸\s*수|사용\s*(할\s*수|가능)|있어|제공|볼\s*수)"),
+    ("system_info", r"시스템\s*(에|에서)?\s*(어떤|무슨|뭐)\s*(기능|메뉴|화면)"),
 )
 
 
@@ -40,9 +47,26 @@ _NAV_BY_CATEGORY = {
     "agent_run": ("Agent 작업 화면으로 이동", "/agent/tasks", "진단/파이프라인 실행은 Agent 작업 화면에서 실행합니다."),
 }
 
+_SYSTEM_INFO_ANSWER = (
+    "저는 FAB 공정 및 운영 데이터 조회 전용 챗봇입니다. "
+    "시스템 메뉴 구성, 사용자 권한, 기능 목록에 관한 질문에는 답변하지 않습니다. "
+    "해당 내용은 시스템 관리자에게 직접 문의해 주세요."
+)
+
 
 def execution_block_response(category: str) -> dict:
-    """차단 응답(answer + navigation 카드). 챗봇이 직접 실행하지 않고 이동 후보만 제시."""
+    """차단 응답. system_info는 내비게이션 없이 거절, 나머지는 담당 화면 안내."""
+    if category == "system_info":
+        return {
+            "answer": _SYSTEM_INFO_ANSWER,
+            "sources": [],
+            "followUps": [],
+            "spokenSummary": "시스템 구성·권한 질문은 답변하지 않습니다.",
+            "ui": None,
+            "toolsUsed": [],
+            "confidence": "HIGH",
+            "warnings": [],
+        }
     label, route, reason = _NAV_BY_CATEGORY.get(
         category, ("담당 화면으로 이동", "/agent/tasks", "이 작업은 담당 화면에서 처리합니다.")
     )

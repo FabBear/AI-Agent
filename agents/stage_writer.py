@@ -6,6 +6,7 @@ Stage 2: cause 완료   → stage2_cause_t{t}.json
 
 from __future__ import annotations
 
+import fcntl
 import json
 from datetime import datetime
 from pathlib import Path
@@ -29,7 +30,51 @@ def _snapshot_time(state: PipelineState) -> int:
 def _save(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 히스토리 파일에 누적 append (디버그용)
+    history = path.parent / (path.stem.rsplit("_t", 1)[0] + "_history.jsonl")
+    with history.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(data, ensure_ascii=False) + "\n")
     _log.info(f"[stage_writer] 저장: {path.name}")
+
+
+def _merge_save_stage1(path: Path, new_alerts: list[dict], snapshot_time: int) -> None:
+    """동시 파이프라인의 alerts를 toolgroup 키로 merge하여 누적 저장.
+
+    파일 락으로 race condition 방지 — 같은 T0의 여러 CRITICAL TG가
+    순서에 상관없이 각자 완료되는 대로 추가된다.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.parent / f".stage1_lock_t{snapshot_time}"
+
+    with lock_path.open("w") as lock_f:
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+        try:
+            existing_alerts: list[dict] = []
+            if path.exists():
+                try:
+                    existing_alerts = json.loads(path.read_text(encoding="utf-8")).get("alerts", [])
+                except Exception:
+                    existing_alerts = []
+
+            # 같은 toolgroup이면 새 데이터로 교체, 없으면 추가
+            new_tgs = {a["toolgroup"] for a in new_alerts}
+            merged = [a for a in existing_alerts if a["toolgroup"] not in new_tgs]
+            merged.extend(new_alerts)
+
+            data = {
+                "event": "bottleneck_detected",
+                "snapshot_time": snapshot_time,
+                "generated_at": _now(),
+                "alerts": merged,
+            }
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            history = path.parent / "stage1_alert_history.jsonl"
+            with history.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(data, ensure_ascii=False) + "\n")
+        finally:
+            fcntl.flock(lock_f, fcntl.LOCK_UN)
+
+    _log.info(f"[stage_writer] 저장(merge): {path.name} — {len(merged)}개 TG")
 
 
 # ── Stage 1: 병목감지 + 확산분석 ──────────────────────────────────────────────
@@ -64,15 +109,7 @@ def emit_stage1(state: PipelineState) -> PipelineState:
             }
         alerts_json.append(entry)
 
-    _save(
-        _OUT / f"stage1_alert_t{t}.json",
-        {
-            "event": "bottleneck_detected",
-            "snapshot_time": t,
-            "generated_at": _now(),
-            "alerts": alerts_json,
-        },
-    )
+    _merge_save_stage1(_OUT / f"stage1_alert_t{t}.json", alerts_json, t)
     return state
 
 
@@ -152,7 +189,7 @@ def emit_stage2(state: PipelineState) -> PipelineState:
                 "sig_kpis": sig_kpis,
             }
 
-        # 시뮬 예측 (1200min forward sim)
+        # 무대응 Forward 시뮬 예측 (기본 120min)
         sim_forecast = None
         if r.sim_forecast:
             sf = r.sim_forecast

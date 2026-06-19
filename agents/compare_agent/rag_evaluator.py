@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Literal, Optional
 
+from agents.prompt_store import get_active_prompt
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
@@ -322,6 +323,13 @@ _EVIDENCE_SYSTEM_PROMPT = """\
 """
 
 
+def _build_compare_system_prompt(default: str) -> str:
+    role_prompt = get_active_prompt("ACTION_PLAN_COMPARE", default)
+    if role_prompt.strip() == default.strip():
+        return default
+    return f"{role_prompt}\n\n{default}"
+
+
 def _format_cases(hits: list[dict]) -> str:
     blocks: list[str] = []
     for hit in hits[:8]:
@@ -391,7 +399,7 @@ def evaluate_candidate_evidence(
         )
         result = structured_llm.invoke(
             [
-                {"role": "system", "content": _EVIDENCE_SYSTEM_PROMPT},
+                {"role": "system", "content": _build_compare_system_prompt(_EVIDENCE_SYSTEM_PROMPT)},
                 {"role": "user", "content": user_prompt},
             ]
         )
@@ -473,7 +481,7 @@ def compare_candidate_evidence(
         )
         comparison = structured_llm.invoke(
             [
-                {"role": "system", "content": _COMPARISON_SYSTEM_PROMPT},
+                {"role": "system", "content": _build_compare_system_prompt(_COMPARISON_SYSTEM_PROMPT)},
                 {"role": "user", "content": user_prompt},
             ]
         )

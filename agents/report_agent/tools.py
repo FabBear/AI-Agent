@@ -60,7 +60,8 @@ async def fetch_past_action_effectiveness(
         plans = await pool.fetch(
             """
             SELECT p.plan_type, p.plan_title,
-                   p.est_avg_wait_delta, p.actual_avg_wait_delta, p.validated_at,
+                   p.est_q_time_delta AS est_avg_wait_delta,
+                   p.actual_avg_wait_delta, p.validated_at,
                    COALESCE(p.plan_id = h.selected_plan_id, FALSE) AS selected
             FROM td_action_plan p
             LEFT JOIN LATERAL (

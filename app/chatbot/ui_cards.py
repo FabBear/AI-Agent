@@ -145,6 +145,30 @@ def _parse_jsonb(value):
         return None
 
 
+def _value(row, key: str):
+    try:
+        return row[key]
+    except (KeyError, TypeError):
+        return None
+
+
+def _first_value(row, *keys: str):
+    for key in keys:
+        value = _value(row, key)
+        if value is not None:
+            return value
+    return None
+
+
+def _fmt_delta(value, digits: int = 1, suffix: str = "") -> str | None:
+    if value is None:
+        return None
+    try:
+        return f"{float(value):+.{digits}f}{suffix}"
+    except (TypeError, ValueError):
+        return None
+
+
 def _fmt_case_detail(row, plans: list, hitl: list) -> str:
     lines = [
         f"[{row['area_name']}/{row['tg_code']}] {row['detected_at']:%m-%d %H:%M} 감지 — "
@@ -170,17 +194,30 @@ def _fmt_case_detail(row, plans: list, hitl: list) -> str:
     if plans:
         lines.append("대응안:")
         for p in plans:
-            d = (
-                f"{p['plan_seq']}. {p['plan_title']}" + (" [선택됨]" if p["selected"] else "")
-                + f": 처리량 {float(p['est_throughput_delta'] or 0):+.1f}, "
-                f"대기 {float(p['est_avg_wait_delta'] or 0):+.0f}분, "
-                f"납기 {float(p['est_delivery_compliance_delta'] or 0):+.1f}%p"
-            )
+            metrics = [
+                ("가동률", _fmt_delta(_value(p, "est_util_delta"), 2)),
+                ("Q-time", _fmt_delta(_first_value(p, "est_q_time_delta", "est_avg_wait_delta"), 1, "분")),
+                ("WIP", _fmt_delta(_value(p, "est_wip_delta"), 1, " Lot")),
+                ("대기율", _fmt_delta(_value(p, "est_wait_ratio_delta"), 4)),
+            ]
+            if all(value is None for _, value in metrics):
+                metrics = [
+                    ("처리량", _fmt_delta(_value(p, "est_throughput_delta"), 1)),
+                    ("대기", _fmt_delta(_value(p, "est_avg_wait_delta"), 0, "분")),
+                    ("납기", _fmt_delta(_value(p, "est_delivery_compliance_delta"), 1, "%p")),
+                ]
+            metric_text = ", ".join(f"{label} {value}" for label, value in metrics if value is not None)
+            d = f"{p['plan_seq']}. {p['plan_title']}" + (" [선택됨]" if p["selected"] else "")
+            if metric_text:
+                d += f": {metric_text}"
             if p["validated_at"]:
-                d += (
-                    f" (실측: 처리량 {float(p['actual_throughput_delta'] or 0):+.1f}, "
-                    f"대기 {float(p['actual_avg_wait_delta'] or 0):+.0f}분)"
-                )
+                actual_metrics = [
+                    ("처리량", _fmt_delta(_value(p, "actual_throughput_delta"), 1)),
+                    ("대기", _fmt_delta(_value(p, "actual_avg_wait_delta"), 0, "분")),
+                ]
+                actual_text = ", ".join(f"{label} {value}" for label, value in actual_metrics if value is not None)
+                if actual_text:
+                    d += f" (실측: {actual_text})"
             lines.append("- " + d)
     if hitl:
         h = hitl[0]

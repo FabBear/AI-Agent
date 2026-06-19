@@ -10,6 +10,7 @@ from pydantic import Field, model_validator
 from agents.agent_task import AgentTaskAgentRequest, AgentTaskAgentResponse
 from agents.fab_briefing_agent import build_fab_briefing_response
 from agents.period_report_agent import build_period_report_response
+from agents.prompt_store import invalidate as invalidate_prompt_cache
 from app.api.deps import InternalUser, get_db, get_internal_user, verify_internal_token
 from app.api.schemas import ApiModel
 from app.common.responses import ApiResponse, success
@@ -20,6 +21,7 @@ router = APIRouter()
 
 
 class RiskGrade(str, Enum):
+    MEDIUM = "MEDIUM"
     HIGH = "HIGH"
     CRITICAL = "CRITICAL"
 
@@ -79,6 +81,15 @@ class ProgressResult(ApiModel):
     steps: list[ProgressStep]
 
 
+class PromptCacheInvalidateRequest(ApiModel):
+    category: str | None = Field(default=None, min_length=1)
+
+
+class PromptCacheInvalidateResult(ApiModel):
+    category: str | None = None
+    scope: Literal["ALL", "CATEGORY"]
+
+
 @router.post("/run", status_code=202, response_model=ApiResponse[AgentRunResult])
 async def run_agent(
     request: AgentRunRequest,
@@ -115,6 +126,17 @@ async def create_period_report(
 ) -> AgentTaskAgentResponse:
     """리포트 아카이브 기간 요약/회고. 결과는 백엔드(tt_period_report)가 영속한다 — AI는 stateless."""
     return await build_period_report_response(request)
+
+
+@router.post("/prompts/cache/invalidate", response_model=ApiResponse[PromptCacheInvalidateResult])
+async def invalidate_prompt_cache_endpoint(
+    request: PromptCacheInvalidateRequest,
+    _: Annotated[None, Depends(verify_internal_token)],
+) -> ApiResponse[PromptCacheInvalidateResult]:
+    category = request.category.strip() if request.category else None
+    category = category or None
+    invalidate_prompt_cache(category)
+    return success(PromptCacheInvalidateResult(category=category, scope="CATEGORY" if category else "ALL"))
 
 
 @router.post("/hitl-result", response_model=ApiResponse[HitlResult])
